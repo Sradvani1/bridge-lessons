@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation"
 import Link from "next/link"
 import { getCategory } from "@/data/categories"
-import { getAllLessons, getLesson, getSiblingLesson } from "@/lib/lessons"
+import { getAllLessons, getLesson, getSiblingLesson, formatContent } from "@/lib/lessons"
 import LessonNav from "@/components/lesson-nav"
 
 export function generateStaticParams() {
@@ -35,11 +35,19 @@ export default async function LessonPage(props: {
 
       <h1 className="mt-2 text-2xl font-bold text-slate-900">{lesson.title}</h1>
 
-      <p className="mt-1 text-xs text-slate-400">Episode {lesson.episodeNumber}</p>
+      <div className="mt-1 flex items-center gap-2">
+        {category && (
+          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
+            {category.name}
+          </span>
+        )}
+      </div>
 
       <div className="mt-6 border-t border-slate-200 pt-6">
-        <div className="prose prose-slate max-w-none text-sm leading-relaxed whitespace-pre-line">
-          {lesson.content}
+        <div className="prose prose-slate max-w-none text-sm leading-relaxed">
+          {formatContent(lesson.content).map((p, i) => (
+            <p key={i}>{p}</p>
+          ))}
         </div>
       </div>
 

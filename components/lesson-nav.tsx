@@ -10,30 +10,26 @@ export default function LessonNav({
 }) {
   return (
     <nav className="flex items-center justify-between border-t border-slate-200 pt-6">
-      <div>
-        {prev ? (
-          <Link
-            href={`/lesson/${prev.episodeNumber}`}
-            className="text-sm text-slate-600 no-underline hover:text-slate-900"
-          >
-            ← {prev.title}
-          </Link>
-        ) : (
-          <span />
-        )}
-      </div>
-      <div>
-        {next ? (
-          <Link
-            href={`/lesson/${next.episodeNumber}`}
-            className="text-sm text-slate-600 no-underline hover:text-slate-900"
-          >
-            {next.title} →
-          </Link>
-        ) : (
-          <span />
-        )}
-      </div>
+      {prev ? (
+        <Link
+          href={`/lesson/${prev.episodeNumber}`}
+          className="text-sm text-slate-600 no-underline hover:text-slate-900"
+        >
+          ← {prev.title}
+        </Link>
+      ) : (
+        <div />
+      )}
+      {next ? (
+        <Link
+          href={`/lesson/${next.episodeNumber}`}
+          className="text-sm text-slate-600 no-underline hover:text-slate-900"
+        >
+          {next.title} →
+        </Link>
+      ) : (
+        <div />
+      )}
     </nav>
   )
 }

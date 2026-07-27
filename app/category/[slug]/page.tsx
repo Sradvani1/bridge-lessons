@@ -2,7 +2,7 @@ import { notFound } from "next/navigation"
 import Link from "next/link"
 import { categories, getCategory } from "@/data/categories"
 import { getLessonsByCategory } from "@/lib/lessons"
-import SearchWrapper from "./search-wrapper"
+import LessonCard from "@/components/lesson-card"
 
 export function generateStaticParams() {
   return categories.map((c) => ({ slug: c.slug }))
@@ -13,9 +13,7 @@ export default async function CategoryPage(props: { params: Promise<{ slug: stri
   const category = getCategory(slug)
   if (!category) notFound()
 
-  const lessons = getLessonsByCategory(slug).sort(
-    (a, b) => a.episodeNumber - b.episodeNumber
-  )
+  const lessons = getLessonsByCategory(slug)
 
   return (
     <>
@@ -26,7 +24,11 @@ export default async function CategoryPage(props: { params: Promise<{ slug: stri
       <h1 className="mt-2 text-2xl font-bold text-slate-900">{category.name}</h1>
       <p className="mt-1 text-sm text-slate-500">{category.description}</p>
 
-      <SearchWrapper lessons={lessons} />
+      <div className="mt-6 space-y-2">
+        {lessons.map((l) => (
+          <LessonCard key={l.id} lesson={l} />
+        ))}
+      </div>
     </>
   )
 }

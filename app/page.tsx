@@ -8,9 +8,8 @@ export default function HomePage() {
 
   return (
     <>
-      <h1 className="text-2xl font-bold text-slate-900">Bridge Lessons</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        71 lessons covering bidding, play, defense, and conventions.
+      <p className="text-lg font-semibold text-slate-900">
+        Bridge lessons covering bidding, play, defense, and conventions.
       </p>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
