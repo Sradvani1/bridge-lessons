@@ -3,8 +3,15 @@ import "./globals.css"
 import Header from "@/components/header"
 
 export const metadata: Metadata = {
-  title: "Bridge Lessons",
-  description: "Learn contract bridge with categorized lessons covering bidding, play, defense, and conventions.",
+  title: "Bridge by Vimal Advani",
+  description: "72 lessons on contract bridge — bidding, play, defense, and conventions.",
+  icons: { icon: "/favicon.svg" },
+  openGraph: {
+    title: "Bridge by Vimal Advani",
+    description: "72 lessons on contract bridge — bidding, play, defense, and conventions.",
+    siteName: "Bridge by Vimal Advani",
+    type: "website",
+  },
 }
 
 export default function RootLayout({
