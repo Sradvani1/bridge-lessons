@@ -10,11 +10,10 @@ export default function HomePage() {
   return (
     <div className="space-y-10">
       <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6 sm:p-8">
-        <p className="font-semibold uppercase tracking-[0.14em] text-[#6b4b08]">Learn & play together</p>
-        <h1 className="mt-2 max-w-3xl text-3xl font-bold tracking-tight text-[#123a28] text-balance sm:text-4xl">
+        <h1 className="font-semibold uppercase tracking-[0.14em] text-[#6b4b08]">
           Bridge lessons for every stage of the game
         </h1>
-        <p className="mt-4 max-w-2xl leading-8 text-[#3f5147]">
+        <p className="mt-3 max-w-2xl leading-8 text-[#3f5147]">
           Bridge lessons from Vimal Advani, created for learners to enjoy at their own pace.
         </p>
         <div className="mt-6 grid gap-3 sm:grid-cols-2">

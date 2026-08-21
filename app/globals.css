@@ -19,10 +19,6 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
-html[data-text-size="larger"] {
-  font-size: 20px;
-}
-
 body {
   background: var(--paper);
   color: var(--ink);

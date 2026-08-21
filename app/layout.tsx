@@ -1,5 +1,4 @@
 import type { Metadata } from "next"
-import Script from "next/script"
 import "./globals.css"
 import Header from "@/components/header"
 
@@ -22,7 +21,6 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="flex min-h-full flex-col font-sans">
-        <Script id="bridge-text-size" strategy="beforeInteractive">{`try { if (localStorage.getItem("bridge-text-size-v1") === "larger") document.documentElement.dataset.textSize = "larger" } catch {}`}</Script>
         <a href="#main-content" className="sr-only z-50 rounded-b-lg bg-[#123a28] px-4 py-3 font-semibold text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-0">
           Skip to main content
         </a>

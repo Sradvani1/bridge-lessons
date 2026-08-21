@@ -17,8 +17,8 @@ export default async function CategoryPage(props: { params: Promise<{ slug: stri
 
   return (
     <div>
-      <Link href="/" className="inline-flex min-h-11 items-center rounded-lg px-3 font-semibold text-[#355545] no-underline hover:bg-[#edf4ef] hover:text-[#123a28]">
-        ← All Lessons
+      <Link href="/#lesson-categories" className="inline-flex min-h-11 items-center rounded-lg px-3 font-semibold text-[#355545] no-underline hover:bg-[#edf4ef] hover:text-[#123a28]">
+        ← Back to Topics
       </Link>
 
       <h1 className="mt-4 text-3xl font-bold tracking-tight text-[#123a28] text-balance">{category.name}</h1>
