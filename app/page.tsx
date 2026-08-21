@@ -10,8 +10,9 @@ export default function HomePage() {
   return (
     <div className="space-y-10">
       <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6 sm:p-8">
-        <h1 className="sr-only">Bridge with Vimal</h1>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <h1 className="text-2xl font-bold tracking-tight text-[#123a28] text-balance sm:text-3xl">Learn bridge at your own pace</h1>
+        <p className="mt-2 max-w-2xl leading-7 text-[#52615a]">Explore lessons on bidding, play, defense, and conventions.</p>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
           <a href="#lesson-categories" className="flex min-h-16 items-center justify-between rounded-xl bg-[#1d5138] px-5 font-bold text-white no-underline hover:bg-[#123a28]">
             Browse Lessons <span aria-hidden="true">→</span>
           </a>
