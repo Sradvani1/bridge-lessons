@@ -21,7 +21,7 @@ export default function OpenGraphImage() {
       >
         <div style={{ fontSize: 120, marginBottom: 16 }}>♠</div>
         <div style={{ fontSize: 48, fontWeight: 700, letterSpacing: "-0.02em" }}>
-          Bridge by Vimal Advani
+          Bridge with Vimal
         </div>
         <div style={{ fontSize: 24, color: "#94a3b8", marginTop: 8 }}>
           72 lessons on bidding, play, defense & conventions

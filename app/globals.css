@@ -1,2 +1,61 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+
+:root {
+  color-scheme: light;
+  --paper: #fbf8f0;
+  --paper-deep: #f3ecdc;
+  --ink: #17221e;
+  --muted: #52615a;
+  --line: #cbd5cc;
+  --green: #1d5138;
+  --green-dark: #123a28;
+  --gold: #9a6700;
+}
+
+html {
+  font-size: 18px;
+  background: var(--paper);
+  -webkit-text-size-adjust: 100%;
+}
+
+html[data-text-size="larger"] {
+  font-size: 20px;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  text-rendering: optimizeLegibility;
+}
+
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: rgba(29, 81, 56, 0.16);
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 3px solid #b7791f;
+  outline-offset: 3px;
+}
+
+@media print {
+  header,
+  [data-print-hidden] {
+    display: none !important;
+  }
+
+  body,
+  main {
+    background: white !important;
+    color: black !important;
+  }
+
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+}

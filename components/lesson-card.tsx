@@ -5,9 +5,9 @@ export default function LessonCard({ lesson }: { lesson: Lesson }) {
   return (
     <Link
       href={`/lesson/${lesson.episodeNumber}`}
-      className="block rounded-md border border-slate-200 px-4 py-3 no-underline transition-colors hover:border-slate-400 hover:bg-slate-50"
+      className="block min-h-14 rounded-xl border border-[#b7c6ba] bg-white px-5 py-4 no-underline hover:border-[#527360] hover:bg-[#f6faf6]"
     >
-      <span className="text-sm text-slate-900">{lesson.title}</span>
+      <span className="font-semibold leading-7 text-[#173c2a]">{lesson.title}</span>
     </Link>
   )
 }

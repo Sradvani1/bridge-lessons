@@ -9,26 +9,26 @@ export default function LessonNav({
   next: Lesson | undefined
 }) {
   return (
-    <nav className="flex items-center justify-between border-t border-slate-200 pt-6">
+    <nav data-print-hidden aria-label="Lesson navigation" className="mt-10 grid gap-3 border-t border-[#cbd5cc] pt-6 sm:grid-cols-2">
       {prev ? (
         <Link
           href={`/lesson/${prev.episodeNumber}`}
-          className="text-sm text-slate-600 no-underline hover:text-slate-900"
+          className="flex min-h-14 items-center rounded-xl border border-[#b7c6ba] bg-white px-4 font-semibold leading-6 text-[#294236] no-underline hover:bg-[#edf4ef]"
         >
-          ← {prev.title}
+          ← <span className="ml-2 min-w-0">{prev.title}</span>
         </Link>
       ) : (
-        <div />
+        <div className="hidden sm:block" />
       )}
       {next ? (
         <Link
           href={`/lesson/${next.episodeNumber}`}
-          className="text-sm text-slate-600 no-underline hover:text-slate-900"
+          className="flex min-h-14 items-center justify-end rounded-xl border border-[#b7c6ba] bg-white px-4 text-right font-semibold leading-6 text-[#294236] no-underline hover:bg-[#edf4ef]"
         >
-          {next.title} →
+          <span className="mr-2 min-w-0">{next.title}</span> →
         </Link>
       ) : (
-        <div />
+        <div className="hidden sm:block" />
       )}
     </nav>
   )

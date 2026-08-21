@@ -5,11 +5,11 @@ export default function CategoryCard({ category, count }: { category: Category; 
   return (
     <Link
       href={`/category/${category.slug}`}
-      className="block rounded-lg border border-slate-200 p-5 no-underline transition-colors hover:border-slate-400 hover:bg-slate-50"
+      className="block min-h-36 rounded-xl border border-[#b7c6ba] bg-white p-5 no-underline hover:border-[#527360] hover:bg-[#f6faf6]"
     >
-      <h2 className="text-base font-semibold text-slate-900">{category.name}</h2>
-      <p className="mt-1 text-sm text-slate-500">{category.description}</p>
-      <p className="mt-2 text-xs text-slate-400">
+      <h2 className="text-xl font-bold text-[#173c2a]">{category.name}</h2>
+      <p className="mt-2 leading-7 text-[#52615a]">{category.description}</p>
+      <p className="mt-3 font-semibold text-[#476052]">
         {count} {count === 1 ? "lesson" : "lessons"}
       </p>
     </Link>

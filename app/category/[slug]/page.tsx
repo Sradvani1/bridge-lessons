@@ -16,19 +16,19 @@ export default async function CategoryPage(props: { params: Promise<{ slug: stri
   const lessons = getLessonsByCategory(slug)
 
   return (
-    <>
-      <Link href="/" className="text-sm text-slate-500 no-underline hover:text-slate-700">
-        ← All categories
+    <div>
+      <Link href="/" className="inline-flex min-h-11 items-center rounded-lg px-3 font-semibold text-[#355545] no-underline hover:bg-[#edf4ef] hover:text-[#123a28]">
+        ← All Lessons
       </Link>
 
-      <h1 className="mt-2 text-2xl font-bold text-slate-900">{category.name}</h1>
-      <p className="mt-1 text-sm text-slate-500">{category.description}</p>
+      <h1 className="mt-4 text-3xl font-bold tracking-tight text-[#123a28] text-balance">{category.name}</h1>
+      <p className="mt-3 max-w-3xl leading-8 text-[#52615a]">{category.description}</p>
 
-      <div className="mt-6 space-y-2">
+      <div className="mt-8 space-y-3">
         {lessons.map((l) => (
           <LessonCard key={l.id} lesson={l} />
         ))}
       </div>
-    </>
+    </div>
   )
 }

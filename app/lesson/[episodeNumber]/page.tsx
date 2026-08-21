@@ -3,6 +3,7 @@ import Link from "next/link"
 import { getCategory } from "@/data/categories"
 import { getAllLessons, getLesson, getSiblingLesson, formatContent } from "@/lib/lessons"
 import LessonNav from "@/components/lesson-nav"
+import LessonActions from "@/components/lesson-actions"
 
 export function generateStaticParams() {
   return getAllLessons().map((l) => ({
@@ -25,26 +26,27 @@ export default async function LessonPage(props: {
   const next = getSiblingLesson(num, lesson.category, "next")
 
   return (
-    <>
+    <article>
       <Link
         href={`/category/${lesson.category}`}
-        className="text-sm text-slate-500 no-underline hover:text-slate-700"
+        className="inline-flex min-h-11 items-center rounded-lg px-3 font-semibold text-[#355545] no-underline hover:bg-[#edf4ef] hover:text-[#123a28]"
       >
         ← {category?.name ?? lesson.category}
       </Link>
 
-      <h1 className="mt-2 text-2xl font-bold text-slate-900">{lesson.title}</h1>
+      <h1 className="mt-4 text-3xl font-bold tracking-tight text-[#123a28] text-balance sm:text-4xl">{lesson.title}</h1>
 
-      <div className="mt-1 flex items-center gap-2">
+      <div className="mt-3 flex items-center gap-2">
         {category && (
-          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500">
+          <span className="rounded-full bg-[#e4eee7] px-3 py-1 text-sm font-semibold text-[#355545]">
             {category.name}
           </span>
         )}
       </div>
+      <LessonActions />
 
-      <div className="mt-6 border-t border-slate-200 pt-6">
-        <div className="prose prose-slate max-w-none text-sm leading-relaxed">
+      <div className="mt-8 max-w-3xl border-t border-[#cbd5cc] pt-8">
+        <div className="prose max-w-none text-[#263b30] prose-p:my-0 prose-p:mb-6 prose-p:leading-8 prose-p:text-pretty">
           {formatContent(lesson.content).map((p, i) => (
             <p key={i}>{p}</p>
           ))}
@@ -52,6 +54,6 @@ export default async function LessonPage(props: {
       </div>
 
       <LessonNav prev={prev} next={next} />
-    </>
+    </article>
   )
 }
