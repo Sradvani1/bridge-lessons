@@ -10,13 +10,8 @@ export default function HomePage() {
   return (
     <div className="space-y-10">
       <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6 sm:p-8">
-        <h1 className="font-semibold uppercase tracking-[0.14em] text-[#6b4b08]">
-          Bridge lessons for every stage of the game
-        </h1>
-        <p className="mt-3 max-w-2xl leading-8 text-[#3f5147]">
-          Bridge lessons from Vimal Advani, created for learners to enjoy at their own pace.
-        </p>
-        <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <h1 className="sr-only">Bridge with Vimal</h1>
+        <div className="grid gap-3 sm:grid-cols-2">
           <a href="#lesson-categories" className="flex min-h-16 items-center justify-between rounded-xl bg-[#1d5138] px-5 font-bold text-white no-underline hover:bg-[#123a28]">
             Browse Lessons <span aria-hidden="true">→</span>
           </a>
