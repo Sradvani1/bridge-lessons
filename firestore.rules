@@ -1,0 +1,164 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function activeGamePath() {
+      return /databases/$(database)/documents/active-game/current;
+    }
+
+    match /active-game/current {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['gameId', 'directorUid'])
+        && request.resource.data.keys().hasOnly(['gameId', 'directorUid'])
+        && request.resource.data.gameId is string
+        && request.resource.data.directorUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.directorUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.status == 'playing';
+      allow update: if false;
+      allow delete: if signedIn()
+        && resource.data.directorUid == request.auth.uid
+        && getAfter(/databases/$(database)/documents/games/$(resource.data.gameId)).data.status in ['finished', 'cancelled'];
+    }
+
+    // Friendly aliases -> unguessable game IDs. Lookup by exact code only.
+    match /codes/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && code.matches('[A-HJ-NP-Z2-9]{6}')
+        && request.resource.data.keys().hasOnly(['gameId'])
+        && request.resource.data.gameId is string
+        && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.directorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /games/{gameId} {
+      function gameData() {
+        return resource.data;
+      }
+      function isDirector() {
+        return signedIn() && request.auth.uid == gameData().directorUid;
+      }
+
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['status', 'pairs', 'directorUid', 'tables', 'createdAt'])
+        && request.resource.data.status == 'playing'
+        && request.resource.data.directorUid == request.auth.uid
+        && request.resource.data.pairs.ns.size() == 3
+        && request.resource.data.pairs.ew.size() == 3
+        && request.resource.data.tables.keys().size() == 0
+        && getAfter(activeGamePath()).data.gameId == gameId
+        && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
+      function validTableClaim() {
+        return gameData().status == 'playing'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tables'])
+          && request.resource.data.tables.keys().hasOnly(['1', '2', '3'])
+          && ((request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['1'])
+                && !('1' in gameData().tables.keys())
+                && request.resource.data.tables['1'] == request.auth.uid)
+            || (request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['2'])
+                && !('2' in gameData().tables.keys())
+                && request.resource.data.tables['2'] == request.auth.uid)
+            || (request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['3'])
+                && !('3' in gameData().tables.keys())
+                && request.resource.data.tables['3'] == request.auth.uid));
+      }
+      function validDirectorUpdate() {
+        return isDirector() && (
+          request.resource.data.status == gameData().status
+          || (gameData().status == 'playing'
+              && request.resource.data.status in ['finished', 'cancelled']
+              && !existsAfter(activeGamePath()))
+        );
+      }
+      // Table claims are immutable per device. Finishing or cancelling clears the active-game lock.
+      allow update: if signedIn() && (
+        validDirectorUpdate()
+        || validTableClaim()
+      );
+      allow delete: if false;
+
+      match /results/{resultId} {
+        function live() {
+          return get(/databases/$(database)/documents/games/$(gameId)).data;
+        }
+        function myTable() {
+          return !signedIn() ? 0
+            : (('1' in live().tables.keys()) && live().tables['1'] == request.auth.uid) ? 1
+            : (('2' in live().tables.keys()) && live().tables['2'] == request.auth.uid) ? 2
+            : (('3' in live().tables.keys()) && live().tables['3'] == request.auth.uid) ? 3
+            : 0;
+        }
+        function readsOwnResult() {
+          return myTable() == resource.data.nsPairIndex + 1;
+        }
+        function writesOwnResult() {
+          return myTable() > 0
+            && live().status == 'playing'
+            && request.resource.data.kind != 'manual'
+            && validResult()
+            && request.resource.data.table == myTable()
+            && request.resource.data.nsPairIndex == myTable() - 1
+            && request.resource.data.updatedBy == request.auth.uid
+            && resultId == 'board-' + string(request.resource.data.boardNumber) + '-ns-'
+                + string(request.resource.data.nsPairIndex);
+        }
+        function correctMovement() {
+          return request.resource.data.nsPairIndex == request.resource.data.table - 1
+            && ((request.resource.data.table == 1 && request.resource.data.round == 0 && request.resource.data.ewPairIndex == 0 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4)
+              || (request.resource.data.table == 1 && request.resource.data.round == 1 && request.resource.data.ewPairIndex == 2 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8)
+              || (request.resource.data.table == 1 && request.resource.data.round == 2 && request.resource.data.ewPairIndex == 1 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12)
+              || (request.resource.data.table == 2 && request.resource.data.round == 0 && request.resource.data.ewPairIndex == 1 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8)
+              || (request.resource.data.table == 2 && request.resource.data.round == 1 && request.resource.data.ewPairIndex == 0 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12)
+              || (request.resource.data.table == 2 && request.resource.data.round == 2 && request.resource.data.ewPairIndex == 2 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4)
+              || (request.resource.data.table == 3 && request.resource.data.round == 0 && request.resource.data.ewPairIndex == 2 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12)
+              || (request.resource.data.table == 3 && request.resource.data.round == 1 && request.resource.data.ewPairIndex == 1 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4)
+              || (request.resource.data.table == 3 && request.resource.data.round == 2 && request.resource.data.ewPairIndex == 0 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8));
+        }
+        function validResult() {
+          return request.resource.data.keys().hasAll(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'updatedBy', 'updatedAt'])
+            && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'level', 'strain', 'doubling', 'declarer', 'tricks', 'manualScore', 'updatedBy', 'updatedAt'])
+            && request.resource.data.boardNumber is int && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 12
+            && request.resource.data.round is int && request.resource.data.round >= 0 && request.resource.data.round <= 2
+            && request.resource.data.table is int && request.resource.data.table >= 1 && request.resource.data.table <= 3
+            && request.resource.data.nsPairIndex is int && request.resource.data.ewPairIndex is int
+            && request.resource.data.updatedBy is string && request.resource.data.updatedAt is int
+            && correctMovement()
+            && ((request.resource.data.kind == 'passed-out' && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'updatedBy', 'updatedAt']))
+              || (request.resource.data.kind == 'manual' && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'manualScore', 'updatedBy', 'updatedAt']) && request.resource.data.manualScore is int && request.resource.data.manualScore >= -9999999 && request.resource.data.manualScore <= 9999999)
+              || (request.resource.data.kind == 'contract' && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'level', 'strain', 'doubling', 'declarer', 'tricks', 'updatedBy', 'updatedAt']) && request.resource.data.level is int && request.resource.data.level >= 1 && request.resource.data.level <= 7 && request.resource.data.tricks is int && request.resource.data.tricks >= 0 && request.resource.data.tricks <= 13 && request.resource.data.strain in ['C', 'D', 'H', 'S', 'NT'] && request.resource.data.doubling in ['none', 'doubled', 'redoubled'] && request.resource.data.declarer in ['ns', 'ew']));
+        }
+        function hasCanonicalResultId() {
+          return resultId == 'board-' + string(request.resource.data.boardNumber) + '-ns-'
+            + string(request.resource.data.nsPairIndex);
+        }
+
+        // Director: always. Everyone: after reveal. Tables: their own rows until then.
+        allow read: if signedIn() && (
+          request.auth.uid == live().directorUid
+          || live().status == 'finished'
+          || readsOwnResult()
+        );
+
+        allow create: if signedIn() && (
+          (request.auth.uid == live().directorUid && validResult() && hasCanonicalResultId())
+          || writesOwnResult()
+        );
+        allow update: if signedIn() && (
+          (request.auth.uid == live().directorUid && validResult() && hasCanonicalResultId())
+          || (resource.data.kind != 'manual' && writesOwnResult())
+        );
+        allow delete: if false;
+      }
+    }
+  }
+}

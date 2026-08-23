@@ -20,6 +20,21 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Live Duplicate Scoring
+
+The Mitchell scorer uses Firebase Firestore and anonymous authentication so three tables can enter scores from separate phones.
+
+1. Create a Firebase project and enable Firestore plus Anonymous Authentication.
+2. Copy `.env.example` to `.env.local` and add the Firebase web-app values.
+3. Deploy `firestore.rules` with the Firebase CLI before using the scorer in a game.
+4. Add the same `NEXT_PUBLIC_FIREBASE_*` values to Vercel for production.
+
+Without those values, `/play` shows a setup message and the lesson site continues to work normally.
+
+### Security Rules Tests
+
+Run `npm run test:rules` to start a disposable local Firestore emulator and verify table isolation, write validation, manual-score protection, reveal access, and atomic game-code creation. It uses the `demo-bridge` project ID and does not access a production Firebase project.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

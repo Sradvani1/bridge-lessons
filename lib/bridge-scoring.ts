@@ -173,7 +173,7 @@ export function scoreToImps(scoreDifference: number) {
   return Math.sign(scoreDifference) * imps
 }
 
-function competitionRanks(values: readonly number[]) {
+export function competitionRanks(values: readonly number[]) {
   return values.map((value) => 1 + values.filter((other) => other > value).length)
 }
 

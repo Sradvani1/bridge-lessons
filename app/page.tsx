@@ -16,8 +16,8 @@ export default function HomePage() {
           <a href="#lesson-categories" className="flex min-h-16 items-center justify-between rounded-xl bg-[#1d5138] px-5 font-bold text-white no-underline hover:bg-[#123a28]">
             Browse Lessons <span aria-hidden="true">→</span>
           </a>
-          <Link href="/calculator" className="flex min-h-16 items-center justify-between rounded-xl border-2 border-[#1d5138] bg-white px-5 font-bold text-[#173c2a] no-underline hover:bg-[#edf4ef]">
-            Open Score Calculator <span aria-hidden="true">→</span>
+          <Link href="/play" className="flex min-h-16 items-center justify-between rounded-xl border-2 border-[#1d5138] bg-white px-5 font-bold text-[#173c2a] no-underline hover:bg-[#edf4ef]">
+            Run Duplicate Game <span aria-hidden="true">→</span>
           </Link>
         </div>
       </section>

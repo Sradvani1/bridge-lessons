@@ -7,15 +7,19 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test test/bridge-scoring.test.ts"
+    "test": "tsx --test test/bridge-scoring.test.ts test/mitchell.test.ts",
+    "test:rules": "npx -y firebase-tools@latest emulators:exec --project demo-bridge --only firestore \"tsx --test test/firestore.rules.test.ts\""
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",
+    "firebase": "^12.18.0",
     "next": "16.2.12",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

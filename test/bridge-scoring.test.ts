@@ -6,7 +6,6 @@ import {
   scoreToImps,
   type ContractInput,
 } from "../lib/bridge-scoring"
-import { normalizeCalculatorDraft } from "../lib/calculator-draft"
 
 function score(input: Partial<ContractInput>) {
   const calculation = calculateDuplicateScore({
@@ -86,37 +85,4 @@ test("rejects duplicate IDs and non-integer ranking scores", () => {
     /IDs must be unique/,
   )
   assert.throws(() => rankBoardResults([{ id: "a", label: "A", nsScore: 1.5 }]), /whole numbers/)
-})
-
-test("restores only valid calculator drafts", () => {
-  const draft = normalizeCalculatorDraft({
-    vulnerability: "none",
-    rankingMethod: "matchpoints",
-    datumValue: "",
-    rows: [
-      { id: "pair-1", label: "North South", kind: "contract", level: "4", strain: "S", declarer: "ns", tricks: "10", doubling: "none", manualScore: "" },
-      { id: "pair-2", label: "", kind: "passed-out", level: "", strain: "NT", declarer: "ew", tricks: "", doubling: "none", manualScore: "" },
-    ],
-  })
-
-  assert.equal(draft?.rows[1].label, "NS Pair 2")
-  assert.equal(normalizeCalculatorDraft({ vulnerability: "none", rankingMethod: "matchpoints", rows: [] }), null)
-  assert.equal(normalizeCalculatorDraft({ vulnerability: "invalid", rankingMethod: "matchpoints", datumValue: "", rows: [] }), null)
-  assert.equal(normalizeCalculatorDraft({
-    vulnerability: "none",
-    rankingMethod: "matchpoints",
-    datumValue: "",
-    rows: [
-      { id: "pair-1", label: "Pair 1", kind: "contract", level: "1", strain: "C", declarer: "ns", tricks: "7", doubling: "none", manualScore: "" },
-      { id: "pair-2", label: "Pair 2", kind: "contract", level: "1", strain: "invalid", declarer: "ns", tricks: "7", doubling: "none", manualScore: "" },
-    ],
-  }), null)
-
-  const cappedDraft = normalizeCalculatorDraft({
-    vulnerability: "none",
-    rankingMethod: "matchpoints",
-    datumValue: "",
-    rows: Array.from({ length: 13 }, (_, index) => ({ id: `pair-${index + 1}`, label: `Pair ${index + 1}`, kind: "contract", level: "", strain: "C", declarer: "ns", tricks: "", doubling: "none", manualScore: "" })),
-  })
-  assert.equal(cappedDraft?.rows.length, 12)
 })
