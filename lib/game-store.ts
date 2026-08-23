@@ -179,7 +179,7 @@ export async function saveResult(gameId: string, input: ResultInput): Promise<vo
 
 export function subscribeGame(
   gameId: string,
-  onData: (game: StoredGame | null) => void,
+  onData: (game: StoredGame | null, hasPendingWrites: boolean) => void,
   onError: (error: Error) => void,
 ): () => void {
   let cancelled = false
@@ -188,7 +188,8 @@ export function subscribeGame(
     .then((db) => {
       const nextUnsubscribe = onSnapshot(
         doc(db, "games", gameId),
-        (snapshot) => onData(snapshot.exists() ? parseStoredGame(snapshot.data()) : null),
+        { includeMetadataChanges: true },
+        (snapshot) => onData(snapshot.exists() ? parseStoredGame(snapshot.data()) : null, snapshot.metadata.hasPendingWrites),
         onError,
       )
       if (cancelled) nextUnsubscribe()

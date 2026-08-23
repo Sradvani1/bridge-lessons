@@ -45,6 +45,7 @@ function formFor(existing: StoredResult): FormState {
 export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const router = useRouter()
   const [game, setGame] = useState<StoredGame | null>(null)
+  const [gameHasPendingWrites, setGameHasPendingWrites] = useState(false)
   const [results, setResults] = useState<StoredResult[]>([])
   const [selectedTable, setSelectedTable] = useState<number | null>(null)
   const [round, setRound] = useState<RoundIndex>(0)
@@ -59,7 +60,10 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     return localStorage.getItem(`bridge-code-${gameId}`) ?? ""
   })
 
-  useEffect(() => subscribeGame(gameId, setGame, (next) => setError(next.message)), [gameId])
+  useEffect(() => subscribeGame(gameId, (next, hasPendingWrites) => {
+    setGame(next)
+    setGameHasPendingWrites(hasPendingWrites)
+  }, (next) => setError(next.message)), [gameId])
 
   const directorUid = game?.directorUid
   useEffect(() => {
@@ -82,7 +86,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     : null
   const table = director ? selectedTable : claimedTable ?? newlyClaimedTable
   const ewPair = table ? eastWestPairAt(table as 1 | 2 | 3, round) : null
-  const resultsTable = director ? selectedTable : claimedTable
+  const resultsTable = director ? selectedTable : gameHasPendingWrites ? null : claimedTable
 
   const gameStatus = game?.status
   useEffect(() => {
