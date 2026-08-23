@@ -81,15 +81,16 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     ? [1, 2, 3].find((number) => game.tables[String(number)] === userId) ?? null
     : null
   const table = director ? selectedTable : claimedTable ?? newlyClaimedTable
+  const resultsTable = director ? selectedTable : claimedTable
 
   const gameStatus = game?.status
   useEffect(() => {
     if (!gameStatus) return
     const view = director || gameStatus === "finished"
       ? { viewer: "director-or-finished" as const }
-      : table ? { viewer: "table" as const, table } : null
+      : resultsTable ? { viewer: "table" as const, table: resultsTable } : null
     return view ? subscribeResults(gameId, view, setResults, (next) => setError(next.message)) : undefined
-  }, [director, gameId, gameStatus, table])
+  }, [director, gameId, gameStatus, resultsTable])
 
   async function chooseTable(nextTable: number) {
     if (game?.tables[String(nextTable)]) {
