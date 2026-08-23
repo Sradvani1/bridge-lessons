@@ -52,6 +52,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const [message, setMessage] = useState("")
   const [director, setDirector] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
+  const [newlyClaimedTable, setNewlyClaimedTable] = useState<number | null>(null)
   const [joinCode] = useState(() => {
     if (initialJoinCode) return initialJoinCode
     if (typeof window === "undefined") return ""
@@ -79,7 +80,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const claimedTable = game && userId
     ? [1, 2, 3].find((number) => game.tables[String(number)] === userId) ?? null
     : null
-  const table = director ? selectedTable : claimedTable
+  const table = director ? selectedTable : claimedTable ?? newlyClaimedTable
 
   const gameStatus = game?.status
   useEffect(() => {
@@ -91,11 +92,17 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   }, [director, gameId, gameStatus, table])
 
   async function chooseTable(nextTable: number) {
+    if (game?.tables[String(nextTable)]) {
+      setError(`Table ${nextTable} is already in use. Choose another table or ask the director to release it.`)
+      return
+    }
+    setError("")
     try {
       await claimTable(gameId, nextTable)
+      setNewlyClaimedTable(nextTable)
       setMessage(`Table ${nextTable} is ready.`)
-    } catch (next) {
-      setError(next instanceof Error ? next.message : "Could not claim this table.")
+    } catch {
+      setError(`Could not claim Table ${nextTable}. Another device may have claimed it first. Choose another table or ask the director to release it.`)
     }
   }
 
@@ -130,8 +137,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     }
   }
 
-  if (error) return <p role="alert" className="rounded-xl bg-[#fff3f1] p-5 font-semibold text-[#8b2f27]">{error}</p>
-  if (!game) return <p className="rounded-xl bg-[#f3ecdc] p-5 text-[#52615a]">Connecting to the game...</p>
+  if (!game) return error ? <p role="alert" className="rounded-xl bg-[#fff3f1] p-5 font-semibold text-[#8b2f27]">{error}</p> : <p className="rounded-xl bg-[#f3ecdc] p-5 text-[#52615a]">Connecting to the game...</p>
   if (game.status === "cancelled") return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Cancelled</h1><p className="mt-3 text-[#52615a]">This game is no longer active. Start or join the current class game from the lobby.</p><button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
 
   const standings = computeStandings(results, game.pairs)
@@ -142,6 +148,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
 
   return <div className="space-y-6">
     <p aria-live="polite" className="sr-only">{message}</p>
+    {error ? <p role="alert" className="rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{error}</p> : null}
     <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
