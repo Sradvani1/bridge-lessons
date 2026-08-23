@@ -81,6 +81,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     ? [1, 2, 3].find((number) => game.tables[String(number)] === userId) ?? null
     : null
   const table = director ? selectedTable : claimedTable ?? newlyClaimedTable
+  const ewPair = table ? eastWestPairAt(table as 1 | 2 | 3, round) : null
   const resultsTable = director ? selectedTable : claimedTable
 
   const gameStatus = game?.status
@@ -176,7 +177,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{[1, 2, 3].map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Release</button> : null}</div>)}</div>
     </section> : null}
 
-    {table ? <TableEntry gameId={gameId} table={table} round={round} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
+    {table && ewPair ? <TableEntry gameId={gameId} table={table} nsLabel={game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={round} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
 
     <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Standings</h2>
@@ -209,10 +210,10 @@ function Traveller({ results }: { results: StoredResult[] }) {
   </div></section>
 }
 
-function TableEntry({ gameId, table, round, setRound, results, onError, director, locked, onBack }: { gameId: string; table: number; round: RoundIndex; setRound: (round: RoundIndex) => void; results: StoredResult[]; onError: (error: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
+function TableEntry({ gameId, table, nsLabel, ewLabel, round, setRound, results, onError, director, locked, onBack }: { gameId: string; table: number; nsLabel: string; ewLabel: string; round: RoundIndex; setRound: (round: RoundIndex) => void; results: StoredResult[]; onError: (error: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
   const boards = boardNumbersAt(table as 1 | 2 | 3, round)
   const ewPair = eastWestPairAt(table as 1 | 2 | 3, round)
-  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">NS {table} vs EW {ewPair}. East-West moves to the next higher table; pass boards to the next lower table.</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div><div className="flex flex-wrap gap-2">{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}{([0, 1, 2] as RoundIndex[]).map((value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 rounded-lg px-3 font-semibold ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div></div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === table - 1); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} table={table} round={round} board={board} ewPair={ewPair} existing={existing} onError={onError} director={director} locked={locked} /> })}</div></section>
+  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}. East-West moves to the next higher table; pass boards to the next lower table.</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div><div className="flex flex-wrap gap-2">{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}{([0, 1, 2] as RoundIndex[]).map((value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 rounded-lg px-3 font-semibold ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div></div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === table - 1); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} table={table} round={round} board={board} ewPair={ewPair} existing={existing} onError={onError} director={director} locked={locked} /> })}</div></section>
 }
 
 function BoardCard({ gameId, table, round, board, ewPair, existing, onError, director, locked }: { gameId: string; table: number; round: RoundIndex; board: number; ewPair: number; existing?: StoredResult; onError: (error: string) => void; director: boolean; locked: boolean }) {
