@@ -26,6 +26,8 @@ export class GameStoreError extends Error {}
 
 const ACTIVE_GAME_PATH = ["active-game", "current"] as const
 
+export type ActiveGame = { gameId: string; directorUid: string }
+
 function generateCode(): string {
   const bytes = new Uint8Array(CODE_LENGTH)
   crypto.getRandomValues(bytes)
@@ -133,7 +135,7 @@ export async function cancelGame(gameId: string): Promise<void> {
 }
 
 export function subscribeActiveGame(
-  onData: (gameId: string | null) => void,
+  onData: (game: ActiveGame | null) => void,
   onError: (error: Error) => void,
 ): () => void {
   let cancelled = false
@@ -141,8 +143,10 @@ export function subscribeActiveGame(
   getDb()
     .then((db) => {
       const nextUnsubscribe = onSnapshot(doc(db, ...ACTIVE_GAME_PATH), (snapshot) => {
-        const gameId = snapshot.data()?.gameId
-        onData(typeof gameId === "string" ? gameId : null)
+        const data = snapshot.data()
+        const gameId = data?.gameId
+        const directorUid = data?.directorUid
+        onData(typeof gameId === "string" && typeof directorUid === "string" ? { gameId, directorUid } : null)
       }, onError)
       if (cancelled) nextUnsubscribe()
       else unsubscribe = nextUnsubscribe
