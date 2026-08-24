@@ -7,7 +7,6 @@ import {
   onSnapshot,
   query,
   runTransaction,
-  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore"
@@ -54,6 +53,7 @@ export async function createGame(pairs: { ns: string[]; ew: string[] }): Promise
           pairs: { ns: pairs.ns, ew: pairs.ew },
           directorUid,
           tables: {},
+          resultCount: 0,
           createdAt: Date.now(),
         })
         transaction.set(codeRef, { gameId })
@@ -103,13 +103,13 @@ export async function finishGame(gameId: string): Promise<void> {
   const db = await getDb()
   const directorUid = await requireUserId()
   try {
+    const gameRef = doc(db, "games", gameId)
     const resultSnapshots = await getDocs(collection(db, "games", gameId, "results"))
     if (resultSnapshots.size !== 36 || resultSnapshots.docs.some((result) => !parseStoredResult(result.data()))) {
       throw new GameStoreError("Enter all 36 valid results before revealing the game.")
     }
     await runTransaction(db, async (transaction) => {
       const activeGameRef = doc(db, ...ACTIVE_GAME_PATH)
-      const gameRef = doc(db, "games", gameId)
       const [activeGame, game] = await Promise.all([transaction.get(activeGameRef), transaction.get(gameRef)])
       if (game.data()?.status === "finished") return
       if (activeGame.data()?.gameId !== gameId || activeGame.data()?.directorUid !== directorUid) {
@@ -177,9 +177,18 @@ export async function saveResult(gameId: string, input: ResultInput): Promise<vo
     updatedAt: Date.now(),
   }
   const resultRef = doc(db, "games", gameId, "results", resultDocumentId(input.boardNumber, input.nsPairIndex))
+  const gameRef = doc(db, "games", gameId)
 
   try {
-    await setDoc(resultRef, payload)
+    await runTransaction(db, async (transaction) => {
+      const [existing, game] = await Promise.all([transaction.get(resultRef), transaction.get(gameRef)])
+      if (existing.exists()) transaction.update(resultRef, payload)
+      else {
+        const resultCount = game.data()?.resultCount
+        transaction.set(resultRef, payload)
+        transaction.update(gameRef, { resultCount: typeof resultCount === "number" ? resultCount + 1 : 1 })
+      }
+    })
   } catch (error) {
     throw new GameStoreError("Could not save this result.", { cause: error })
   }

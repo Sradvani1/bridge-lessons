@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, afterEach, before, test } from "node:test"
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing"
 import { collection, deleteField, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
+import { boardNumbersAt, eastWestPairAt } from "../lib/mitchell"
 
 const projectId = "demo-bridge"
 const gameId = "game-1"
@@ -13,6 +14,7 @@ function game(status: "playing" | "finished" = "playing") {
     pairs: { ns: ["NS 1", "NS 2", "NS 3"], ew: ["EW 1", "EW 2", "EW 3"] },
     directorUid: "director",
     tables: {},
+    resultCount: 0,
     createdAt: 1,
   }
 }
@@ -80,7 +82,16 @@ test("rejects a second concurrent game", async () => {
   await assertFails(second.commit())
 })
 
-test("requires finishing or cancelling to release the active game", async () => {
+test("keeps the active game reference private to its director", async () => {
+  await seed()
+  await seedActiveGame()
+  const director = environment.authenticatedContext("director").firestore()
+  const visitor = environment.authenticatedContext("visitor").firestore()
+  await assertSucceeds(getDoc(doc(director, "active-game", "current")))
+  await assertFails(getDoc(doc(visitor, "active-game", "current")))
+})
+
+test("requires a complete game before finishing or cancelling to release the active game", async () => {
   await seed()
   await seedActiveGame()
   const director = environment.authenticatedContext("director").firestore()
@@ -89,7 +100,12 @@ test("requires finishing or cancelling to release the active game", async () => 
   const finish = writeBatch(director)
   finish.update(doc(director, "games", gameId), { status: "finished" })
   finish.delete(doc(director, "active-game", "current"))
-  await assertSucceeds(finish.commit())
+  await assertFails(finish.commit())
+
+  const cancel = writeBatch(director)
+  cancel.update(doc(director, "games", gameId), { status: "cancelled" })
+  cancel.delete(doc(director, "active-game", "current"))
+  await assertSucceeds(cancel.commit())
 })
 
 test("allows only one device to claim each table", async () => {
@@ -118,7 +134,10 @@ test("keeps live results private to their claimed table", async () => {
 test("rejects foreign and movement-invalid result writes", async () => {
   await seed({ ...game(), tables: { "1": "table-one" } })
   const tableOne = environment.authenticatedContext("table-one").firestore()
-  await assertSucceeds(setDoc(doc(tableOne, "games", gameId, "results", "board-1-ns-0"), result()))
+  const firstResult = writeBatch(tableOne)
+  firstResult.set(doc(tableOne, "games", gameId, "results", "board-1-ns-0"), result())
+  firstResult.update(doc(tableOne, "games", gameId), { resultCount: 1 })
+  await assertSucceeds(firstResult.commit())
   await assertFails(setDoc(doc(tableOne, "games", gameId, "results", "board-5-ns-0"), result({ boardNumber: 5 })))
   await assertFails(setDoc(doc(tableOne, "games", gameId, "results", "board-5-ns-1"), result({ boardNumber: 5, table: 2, nsPairIndex: 1, ewPairIndex: 1 })))
 })
@@ -143,7 +162,10 @@ test("allows table devices to submit each board only once", async () => {
   const tableOne = environment.authenticatedContext("table-one").firestore()
   const director = environment.authenticatedContext("director").firestore()
   const resultRef = doc(tableOne, "games", gameId, "results", "board-1-ns-0")
-  await assertSucceeds(setDoc(resultRef, result()))
+  const firstResult = writeBatch(tableOne)
+  firstResult.set(resultRef, result())
+  firstResult.update(doc(tableOne, "games", gameId), { resultCount: 1 })
+  await assertSucceeds(firstResult.commit())
   await assertFails(setDoc(resultRef, result({ updatedAt: 2 })))
   await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director", updatedAt: 2 })))
 
@@ -157,7 +179,10 @@ test("requires the canonical result document ID for directors", async () => {
   await seed()
   const director = environment.authenticatedContext("director").firestore()
   await assertFails(setDoc(doc(director, "games", gameId, "results", "alternate-result"), result({ updatedBy: "director" })))
-  await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director" })))
+  const directorResult = writeBatch(director)
+  directorResult.set(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director" }))
+  directorResult.update(doc(director, "games", gameId), { resultCount: 1 })
+  await assertSucceeds(directorResult.commit())
 })
 
 test("rejects arbitrary player changes to a game", async () => {
@@ -184,4 +209,36 @@ test("rejects malformed game setup during atomic creation", async () => {
   batch.set(doc(director, "codes", "ABC234"), { gameId: "bad-game" })
   batch.set(doc(director, "active-game", "current"), { gameId: "bad-game", directorUid: "director" })
   await assertFails(batch.commit())
+})
+
+test("rehearses three scorers through a complete game", async () => {
+  await seed()
+  await seedActiveGame()
+  const tables = [1, 2, 3].map((table) => environment.authenticatedContext(`table-${table}`).firestore())
+  const director = environment.authenticatedContext("director").firestore()
+
+  for (const [index, tableFirestore] of tables.entries()) {
+    const table = index + 1
+    await assertSucceeds(updateDoc(doc(tableFirestore, "games", gameId), { [`tables.${table}`]: `table-${table}` }))
+  }
+
+  for (const [index, tableFirestore] of tables.entries()) {
+    const table = index + 1
+    for (const round of [0, 1, 2] as const) {
+      for (const boardNumber of boardNumbersAt(table as 1 | 2 | 3, round)) {
+        const nsPairIndex = table - 1
+        const resultId = `board-${boardNumber}-ns-${nsPairIndex}`
+        const gameSnapshot = await getDoc(doc(tableFirestore, "games", gameId))
+        const batch = writeBatch(tableFirestore)
+        batch.set(doc(tableFirestore, "games", gameId, "results", resultId), result({ boardNumber, round, table, nsPairIndex, ewPairIndex: eastWestPairAt(table as 1 | 2 | 3, round) - 1, updatedBy: `table-${table}` }))
+        batch.update(doc(tableFirestore, "games", gameId), { resultCount: (gameSnapshot.data()?.resultCount as number) + 1 })
+        await assertSucceeds(batch.commit())
+      }
+    }
+  }
+
+  const finish = writeBatch(director)
+  finish.update(doc(director, "games", gameId), { status: "finished" })
+  finish.delete(doc(director, "active-game", "current"))
+  await assertSucceeds(finish.commit())
 })

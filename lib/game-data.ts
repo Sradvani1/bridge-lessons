@@ -140,18 +140,8 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
   const tables: Record<string, string> = {}
   if (!isRecord(raw.tables)) return null
   const tableEntries = Object.entries(raw.tables)
-  const usesCurrentTableOwnership = tableEntries.every(([key, value]) => ["1", "2", "3"].includes(key) && uid(value))
-  if (usesCurrentTableOwnership) {
-    for (const [table, value] of tableEntries) tables[table] = value as string
-  } else {
-    // Games created before exclusive table ownership remain viewable.
-    for (const [key, value] of tableEntries) {
-      const parsedUid = uid(key)
-      const table = typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3 ? value : null
-      if (!parsedUid || table === null || tables[String(table)]) return null
-      tables[String(table)] = parsedUid
-    }
-  }
+  if (!tableEntries.every(([key, value]) => ["1", "2", "3"].includes(key) && uid(value))) return null
+  for (const [table, value] of tableEntries) tables[table] = value as string
 
   return { status, pairs, directorUid, tables }
 }

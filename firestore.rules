@@ -12,7 +12,7 @@ service cloud.firestore {
     }
 
     match /active-game/current {
-      allow get: if signedIn();
+      allow get: if signedIn() && resource.data.directorUid == request.auth.uid;
       allow list: if false;
       allow create: if signedIn()
         && request.resource.data.keys().hasAll(['gameId', 'directorUid'])
@@ -50,7 +50,7 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['status', 'pairs', 'directorUid', 'tables', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['status', 'pairs', 'directorUid', 'tables', 'resultCount', 'createdAt'])
         && request.resource.data.status == 'playing'
         && request.resource.data.directorUid == request.auth.uid
         && request.resource.data.directorUid is string && request.resource.data.directorUid.size() <= 64
@@ -68,6 +68,7 @@ service cloud.firestore {
         && request.resource.data.pairs.ew[2] is string && request.resource.data.pairs.ew[2].size() <= 60
         && request.resource.data.tables is map
         && request.resource.data.tables.keys().size() == 0
+        && request.resource.data.resultCount == 0
         && request.resource.data.createdAt is int
         && getAfter(activeGamePath()).data.gameId == gameId
         && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
@@ -96,17 +97,26 @@ service cloud.firestore {
           && request.resource.data.tables.diff(gameData().tables).changedKeys().size() == 0
           && request.resource.data.tables.diff(gameData().tables).removedKeys().hasOnly(['1', '2', '3']);
       }
+      function validResultCountUpdate() {
+        return gameData().status == 'playing'
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['resultCount'])
+          && request.resource.data.resultCount is int
+          && request.resource.data.resultCount >= 1 && request.resource.data.resultCount <= 36
+          && request.resource.data.resultCount == gameData().resultCount + 1;
+      }
       function validGameClosure() {
         return isDirector()
           && gameData().status == 'playing'
           && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
           && request.resource.data.status in ['finished', 'cancelled']
+          && (request.resource.data.status == 'cancelled' || gameData().resultCount == 36)
           && !existsAfter(activeGamePath());
       }
       // Table claims are immutable per device. Finishing or cancelling clears the active-game lock.
       allow update: if signedIn() && (
         validDirectorTableRelease()
         || validGameClosure()
+        || validResultCountUpdate()
         || validTableClaim()
       );
       allow delete: if false;

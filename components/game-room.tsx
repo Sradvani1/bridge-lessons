@@ -46,6 +46,8 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const router = useRouter()
   const [game, setGame] = useState<StoredGame | null>(null)
   const [gameLoaded, setGameLoaded] = useState(false)
+  const [gameConnectionError, setGameConnectionError] = useState("")
+  const [retryKey, setRetryKey] = useState(0)
   const [gameHasPendingWrites, setGameHasPendingWrites] = useState(false)
   const [results, setResults] = useState<StoredResult[]>([])
   const [resultsHavePendingWrites, setResultsHavePendingWrites] = useState(false)
@@ -71,6 +73,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   useEffect(() => subscribeGame(gameId, (next, hasPendingWrites) => {
     setGame(next)
     setGameLoaded(true)
+    setGameConnectionError("")
     setGameHasPendingWrites(hasPendingWrites)
     const nextClaimedTable = next && userIdRef.current
       ? [1, 2, 3].find((number) => next.tables[String(number)] === userIdRef.current) ?? null
@@ -83,8 +86,8 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     claimedTableRef.current = nextClaimedTable
   }, (next) => {
     setGameLoaded(true)
-    setError(next.message)
-  }), [gameId])
+    setGameConnectionError(next.message)
+  }), [gameId, retryKey])
 
   const directorUid = game?.directorUid
   useEffect(() => {
@@ -113,6 +116,10 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const table = director ? selectedTable : claimedTable
   const ewPair = table ? eastWestPairAt(table as 1 | 2 | 3, round) : null
   const resultsTable = director ? selectedTable : claimedTable
+
+  useEffect(() => {
+    if (claimedTable) claimedTableRef.current = claimedTable
+  }, [claimedTable])
 
   const gameStatus = game?.status
   useEffect(() => {
@@ -188,8 +195,16 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     }
   }
 
+  function retryGame() {
+    setError("")
+    setGame(null)
+    setGameLoaded(false)
+    setGameConnectionError("")
+    setRetryKey((value) => value + 1)
+  }
+
   if (!gameLoaded) return <p className="rounded-xl bg-[#f3ecdc] p-5 text-[#52615a]">Connecting to the game...</p>
-  if (!game) return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Not Found</h1><p className="mt-3 text-[#52615a]">This link is invalid or the game is no longer available.</p>{error ? <p role="alert" className="mt-4 rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{error}</p> : null}<button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
+  if (!game) return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">{gameConnectionError ? "Could Not Connect" : "Game Not Found"}</h1><p className="mt-3 text-[#52615a]">{gameConnectionError ? "Check the connection, then try again." : "This link is invalid or the game is no longer available."}</p>{gameConnectionError ? <p role="alert" className="mt-4 rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{gameConnectionError}</p> : null}<div className="mt-5 flex flex-wrap gap-3">{gameConnectionError ? <button type="button" onClick={retryGame} className="min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Try Again</button> : null}<button type="button" onClick={() => router.push("/play")} className="min-h-12 rounded-xl border border-[#1d5138] px-5 font-bold text-[#173c2a]">Back to Game Lobby</button></div></section>
   if (game.status === "cancelled") return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Cancelled</h1><p className="mt-3 text-[#52615a]">This game is no longer active. Start or join the current class game from the lobby.</p><button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
 
   const standings = computeStandings(results, game.pairs)

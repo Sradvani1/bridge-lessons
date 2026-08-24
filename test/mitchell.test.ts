@@ -51,10 +51,10 @@ test("rejects results that do not match the Mitchell movement", () => {
   assert.equal(parseStoredResult({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 0, ewPairIndex: 1, kind: "passed-out", updatedBy: "a", updatedAt: 1 }), null)
 })
 
-test("reads exclusive table ownership and legacy finished games", () => {
+test("reads exclusive table ownership", () => {
   const base = { status: "finished", pairs: { ns: ["NS 1", "NS 2", "NS 3"], ew: ["EW 1", "EW 2", "EW 3"] }, directorUid: "director" }
   assert.deepEqual(parseStoredGame({ ...base, tables: { "1": "table-one" } })?.tables, { "1": "table-one" })
-  assert.deepEqual(parseStoredGame({ ...base, tables: { "table-one": 1 } })?.tables, { "1": "table-one" })
+  assert.equal(parseStoredGame({ ...base, tables: { "table-one": 1 } }), null)
 })
 
 test("reads cancelled games", () => {

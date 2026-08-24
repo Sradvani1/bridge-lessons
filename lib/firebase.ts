@@ -22,16 +22,25 @@ function getServices(): Promise<{ db: Firestore; auth: Auth }> {
   servicesPromise ??= (async () => {
     const { initializeApp, getApps } = await import("firebase/app")
     const { getAuth, signInAnonymously } = await import("firebase/auth")
-    const { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } = await import("firebase/firestore")
+    const { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } = await import("firebase/firestore")
     const app = getApps()[0] ?? initializeApp(firebaseConfig)
     const auth = getAuth(app)
     if (!auth.currentUser) await signInAnonymously(auth)
     // Keep an offline score queued if a scorer briefly loses Wi-Fi or refreshes.
-    const db = initializeFirestore(app, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-    })
+    let db: Firestore
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      })
+    } catch {
+      // Private browsing and older browsers can reject persistent storage.
+      db = getFirestore(app)
+    }
     return { db, auth }
-  })()
+  })().catch((error: unknown) => {
+    servicesPromise = null
+    throw error
+  })
 
   return servicesPromise
 }

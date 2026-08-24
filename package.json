@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test test/bridge-scoring.test.ts test/mitchell.test.ts",
+    "test:unit": "tsx --test test/bridge-scoring.test.ts test/mitchell.test.ts",
+    "test": "npm run test:unit && npm run test:rules",
     "test:rules": "npx -y firebase-tools@latest emulators:exec --project demo-bridge --only firestore \"tsx --test test/firestore.rules.test.ts\"",
     "test:load": "k6 run load/k6-production-smoke.js"
   },
