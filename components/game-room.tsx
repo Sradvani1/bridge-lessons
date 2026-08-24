@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { rankBoardResults } from "@/lib/bridge-scoring"
@@ -45,15 +45,23 @@ function formFor(existing: StoredResult): FormState {
 export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const router = useRouter()
   const [game, setGame] = useState<StoredGame | null>(null)
+  const [gameLoaded, setGameLoaded] = useState(false)
   const [gameHasPendingWrites, setGameHasPendingWrites] = useState(false)
   const [results, setResults] = useState<StoredResult[]>([])
+  const [resultsHavePendingWrites, setResultsHavePendingWrites] = useState(false)
   const [selectedTable, setSelectedTable] = useState<number | null>(null)
   const [round, setRound] = useState<RoundIndex>(0)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [director, setDirector] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
-  const [newlyClaimedTable, setNewlyClaimedTable] = useState<number | null>(null)
+  const [identityReady, setIdentityReady] = useState(false)
+  const [claimingTable, setClaimingTable] = useState<number | null>(null)
+  const [finishing, setFinishing] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [releasingTable, setReleasingTable] = useState<number | null>(null)
+  const userIdRef = useRef<string | null>(null)
+  const claimedTableRef = useRef<number | null>(null)
   const [joinCode] = useState(() => {
     if (initialJoinCode) return initialJoinCode
     if (typeof window === "undefined") return ""
@@ -62,8 +70,21 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
 
   useEffect(() => subscribeGame(gameId, (next, hasPendingWrites) => {
     setGame(next)
+    setGameLoaded(true)
     setGameHasPendingWrites(hasPendingWrites)
-  }, (next) => setError(next.message)), [gameId])
+    const nextClaimedTable = next && userIdRef.current
+      ? [1, 2, 3].find((number) => next.tables[String(number)] === userIdRef.current) ?? null
+      : null
+    if (nextClaimedTable) {
+      setClaimingTable(null)
+    } else if (claimedTableRef.current) {
+      setMessage(`This device was released from Table ${claimedTableRef.current}. Ask the director to assign a table.`)
+    }
+    claimedTableRef.current = nextClaimedTable
+  }, (next) => {
+    setGameLoaded(true)
+    setError(next.message)
+  }), [gameId])
 
   const directorUid = game?.directorUid
   useEffect(() => {
@@ -72,11 +93,16 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       .then((uid) => {
         if (active) {
           setUserId(uid)
+          userIdRef.current = uid
           setDirector(directorUid === uid)
+          setIdentityReady(true)
         }
       })
       .catch((next: unknown) => {
-        if (active) setError(next instanceof Error ? next.message : "Could not identify this device.")
+        if (active) {
+          setIdentityReady(true)
+          setError(next instanceof Error ? next.message : "Could not identify this device.")
+        }
       })
     return () => { active = false }
   }, [directorUid])
@@ -84,9 +110,9 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const claimedTable = game && userId
     ? [1, 2, 3].find((number) => game.tables[String(number)] === userId) ?? null
     : null
-  const table = director ? selectedTable : claimedTable ?? newlyClaimedTable
+  const table = director ? selectedTable : claimedTable
   const ewPair = table ? eastWestPairAt(table as 1 | 2 | 3, round) : null
-  const resultsTable = director ? selectedTable : gameHasPendingWrites ? null : claimedTable
+  const resultsTable = director ? selectedTable : claimedTable
 
   const gameStatus = game?.status
   useEffect(() => {
@@ -94,20 +120,29 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     const view = director || gameStatus === "finished"
       ? { viewer: "director-or-finished" as const }
       : resultsTable ? { viewer: "table" as const, table: resultsTable } : null
-    return view ? subscribeResults(gameId, view, setResults, (next) => setError(next.message)) : undefined
+    return view ? subscribeResults(gameId, view, (next, hasPendingWrites) => {
+      setResults(next)
+      setResultsHavePendingWrites(hasPendingWrites)
+    }, (next) => setError(next.message)) : undefined
   }, [director, gameId, gameStatus, resultsTable])
 
   async function chooseTable(nextTable: number) {
+    if (!userId || !game || game.status !== "playing" || claimingTable) return
+    if (claimedTable) {
+      setError(`This device already has Table ${claimedTable}.`)
+      return
+    }
     if (game?.tables[String(nextTable)]) {
       setError(`Table ${nextTable} is already in use. Choose another table or ask the director to release it.`)
       return
     }
     setError("")
+    setClaimingTable(nextTable)
     try {
       await claimTable(gameId, nextTable)
-      setNewlyClaimedTable(nextTable)
-      setMessage(`Table ${nextTable} is ready.`)
+      setMessage(`Table ${nextTable} is claimed. Opening the scorer...`)
     } catch {
+      setClaimingTable(null)
       setError(`Could not claim Table ${nextTable}. Another device may have claimed it first. Choose another table or ask the director to release it.`)
     }
   }
@@ -117,33 +152,44 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       setError(`Enter all 36 results before revealing. ${36 - results.length} remain.`)
       return
     }
+    setFinishing(true)
     try {
       await finishGame(gameId)
     } catch (next) {
       setError(next instanceof Error ? next.message : "Could not finish this game.")
+    } finally {
+      setFinishing(false)
     }
   }
 
   async function cancel() {
     if (!window.confirm("Cancel this game? Its entered results will remain stored, but the class can start a new game.")) return
+    setCancelling(true)
     try {
       await cancelGame(gameId)
       router.push("/play")
     } catch (next) {
       setError(next instanceof Error ? next.message : "Could not cancel this game.")
+    } finally {
+      setCancelling(false)
     }
   }
 
   async function release(nextTable: number) {
+    if (!window.confirm(`Release Table ${nextTable}? Its current scorer will no longer be able to save.`)) return
+    setReleasingTable(nextTable)
     try {
       await releaseTable(gameId, nextTable)
       setMessage(`Table ${nextTable} is available for a replacement device.`)
     } catch (next) {
       setError(next instanceof Error ? next.message : "Could not release this table.")
+    } finally {
+      setReleasingTable(null)
     }
   }
 
-  if (!game) return error ? <p role="alert" className="rounded-xl bg-[#fff3f1] p-5 font-semibold text-[#8b2f27]">{error}</p> : <p className="rounded-xl bg-[#f3ecdc] p-5 text-[#52615a]">Connecting to the game...</p>
+  if (!gameLoaded) return <p className="rounded-xl bg-[#f3ecdc] p-5 text-[#52615a]">Connecting to the game...</p>
+  if (!game) return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Not Found</h1><p className="mt-3 text-[#52615a]">This link is invalid or the game is no longer available.</p>{error ? <p role="alert" className="mt-4 rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{error}</p> : null}<button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
   if (game.status === "cancelled") return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Cancelled</h1><p className="mt-3 text-[#52615a]">This game is no longer active. Start or join the current class game from the lobby.</p><button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
 
   const standings = computeStandings(results, game.pairs)
@@ -162,22 +208,25 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
           <p className="mt-1 text-[#52615a]">{progress}</p>
           {director && joinCode ? <p className="mt-3 inline-flex rounded-lg bg-white px-3 py-2 font-bold tracking-[.18em] text-[#123a28]">Join code: {joinCode}</p> : null}
         </div>
-        {director && game.status === "playing" ? <div className="flex flex-wrap gap-3"><button type="button" disabled={results.length !== 36} onClick={finish} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{results.length === 36 ? "Finish & Reveal" : `${36 - results.length} Results Remaining`}</button><button type="button" onClick={cancel} className="min-h-12 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27]">Cancel Game</button></div> : null}
+        {director && game.status === "playing" ? <div className="flex flex-wrap gap-3"><button type="button" disabled={results.length !== 36 || finishing || cancelling} onClick={finish} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{finishing ? "Revealing..." : results.length === 36 ? "Finish & Reveal" : `${36 - results.length} Results Remaining`}</button><button type="button" disabled={finishing || cancelling} onClick={cancel} className="min-h-12 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27] disabled:border-[#c9a5a0] disabled:text-[#a9807b]">{cancelling ? "Cancelling..." : "Cancel Game"}</button></div> : null}
       </div>
       {director ? <div className="mt-5 border-t border-[#cbd5cc] pt-5"><GameJoinQr gameId={gameId} /></div> : null}
     </section>
 
-    {!table && !director ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
+    {gameHasPendingWrites || resultsHavePendingWrites ? <p role="status" className="rounded-xl bg-[#fff8df] p-4 font-semibold text-[#6b4b08]">Saving your latest change. Keep this page open until this message disappears.</p> : null}
+
+    {!identityReady && !director ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><p className="font-semibold text-[#52615a]">Identifying this device...</p></section> : null}
+    {!table && !director && identityReady && game.status === "playing" ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Choose Your Table</h2>
       <p className="mt-2 text-[#52615a]">Use one phone per table. Ask the director to release a table when replacing a device.</p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">{[1, 2, 3].map((number) => <button key={number} type="button" disabled={Boolean(game.tables[String(number)])} onClick={() => chooseTable(number)} className="min-h-16 rounded-xl border-2 border-[#1d5138] font-bold text-[#173c2a] hover:bg-[#edf4ef] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{game.tables[String(number)] ? `Table ${number} in use` : `Table ${number}`}</button>)}</div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">{[1, 2, 3].map((number) => <button key={number} type="button" disabled={Boolean(game.tables[String(number)]) || claimingTable !== null} onClick={() => chooseTable(number)} className="min-h-16 rounded-xl border-2 border-[#1d5138] font-bold text-[#173c2a] hover:bg-[#edf4ef] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{claimingTable === number ? `Claiming Table ${number}...` : game.tables[String(number)] ? `Table ${number} in use` : `Table ${number}`}</button>)}</div>
     </section> : null}
 
     {director && !table ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Director Entry</h2>
       <p className="mt-2 text-[#52615a]">Choose a table to enter or correct a result, including a manual director score.</p>
       <div className="mt-4 flex flex-wrap gap-3">{[1, 2, 3].map((number) => <button key={number} type="button" onClick={() => setSelectedTable(number)} className="min-h-12 rounded-xl border border-[#1d5138] px-4 font-bold text-[#173c2a]">Table {number}</button>)}</div>
-      <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{[1, 2, 3].map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Release</button> : null}</div>)}</div>
+      <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{[1, 2, 3].map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" disabled={releasingTable !== null} onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{releasingTable === number ? "Releasing..." : "Release"}</button> : null}</div>)}</div>
     </section> : null}
 
     {table && ewPair ? <TableEntry gameId={gameId} table={table} nsLabel={game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={round} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
@@ -224,6 +273,7 @@ function BoardCard({ gameId, table, round, board, ewPair, existing, onError, dir
   const [form, setForm] = useState<FormState>(() => existing ? formFor(existing) : initialForm)
   const [saving, setSaving] = useState(false)
   const vulnerability = boardVulnerability(board) ?? "none"
+  const readOnly = locked || (!director && Boolean(existing))
 
   async function save() {
     const level = numberValue(form.level)
@@ -233,7 +283,7 @@ function BoardCard({ gameId, table, round, board, ewPair, existing, onError, dir
     if (form.kind === "passed-out") input = { boardNumber: board, round, table, nsPairIndex: table - 1, ewPairIndex: ewPair - 1, kind: "passed-out" }
     else if (form.kind === "manual" && director && manualScore !== null) input = { boardNumber: board, round, table, nsPairIndex: table - 1, ewPairIndex: ewPair - 1, kind: "manual", manualScore }
     else if (form.kind === "contract" && level !== null && tricks !== null) input = { boardNumber: board, round, table, nsPairIndex: table - 1, ewPairIndex: ewPair - 1, kind: "contract", level, tricks, strain: form.strain, declarer: form.declarer, doubling: form.doubling }
-    if (!input) return onError("Complete the contract and tricks before saving.")
+    if (!input) return onError(form.kind === "manual" ? "Enter a whole-number North-South score." : "Complete the contract and tricks before saving.")
     setSaving(true)
     try {
       await saveResult(gameId, input)
@@ -246,7 +296,7 @@ function BoardCard({ gameId, table, round, board, ewPair, existing, onError, dir
   }
 
   const score = existing ? deriveNsScore(existing) : null
-  return <article className="rounded-xl border border-[#b7c6ba] p-4"><button type="button" disabled={locked} onClick={() => setOpen((value) => !value)} className="flex min-h-12 w-full items-center justify-between text-left font-bold text-[#123a28] disabled:cursor-default"><span>Board {board} · {vulnerability === "both" ? "Both vulnerable" : vulnerability === "none" ? "Neither vulnerable" : `${vulnerability.toUpperCase()} vulnerable`}</span>{locked ? <span>Locked</span> : existing ? <span>Edit</span> : null}</button>{existing && !open ? <p className="mt-2 text-[#52615a]">Saved NS score: {score}</p> : null}{open && !locked ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-[#52615a]">Dealer: {boardDealer(board)}</p><label>Result<select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value as ResultKind })} className={fieldClass}><option value="contract">Contract</option><option value="passed-out">Passed Out</option>{director ? <option value="manual">Manual Director Score</option> : null}</select></label>{form.kind === "contract" ? <ContractFields form={form} setForm={setForm} /> : null}{form.kind === "manual" ? <label>NS score<input type="number" value={form.manualScore} onChange={(event) => setForm({ ...form, manualScore: event.target.value })} className={fieldClass} /></label> : null}<div className="flex items-end"><button type="button" onClick={save} disabled={saving} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{saving ? "Saving..." : "Save result"}</button></div></div> : null}</article>
+  return <article className="rounded-xl border border-[#b7c6ba] p-4"><button type="button" disabled={readOnly} onClick={() => setOpen((value) => !value)} className="flex min-h-12 w-full items-center justify-between text-left font-bold text-[#123a28] disabled:cursor-default"><span>Board {board} · {vulnerability === "both" ? "Both vulnerable" : vulnerability === "none" ? "Neither vulnerable" : `${vulnerability.toUpperCase()} vulnerable`}</span>{locked ? <span>Locked</span> : existing ? <span>{director ? "Edit" : "Saved"}</span> : null}</button>{existing && !open ? <p className="mt-2 text-[#52615a]">Saved NS score: {score}</p> : null}{open && !readOnly ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-[#52615a]">Dealer: {boardDealer(board)}</p><label>Result<select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value as ResultKind })} className={fieldClass}><option value="contract">Contract</option><option value="passed-out">Passed Out</option>{director ? <option value="manual">Manual Director Score</option> : null}</select></label>{form.kind === "contract" ? <ContractFields form={form} setForm={setForm} /> : null}{form.kind === "manual" ? <label>NS score<input type="number" value={form.manualScore} onChange={(event) => setForm({ ...form, manualScore: event.target.value })} className={fieldClass} /></label> : null}<div className="flex items-end"><button type="button" onClick={save} disabled={saving} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{saving ? "Saving..." : "Save result"}</button></div></div> : null}</article>
 }
 
 function ContractFields({ form, setForm }: { form: FormState; setForm: (form: FormState) => void }) {

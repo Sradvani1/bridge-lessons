@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, afterEach, before, test } from "node:test"
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing"
-import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
+import { collection, deleteField, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
 
 const projectId = "demo-bridge"
 const gameId = "game-1"
@@ -99,6 +99,7 @@ test("allows only one device to claim each table", async () => {
   await assertSucceeds(updateDoc(doc(tableOne, "games", gameId), { "tables.1": "table-one" }))
   await assertFails(updateDoc(doc(tableTwo, "games", gameId), { "tables.1": "table-two" }))
   await assertSucceeds(updateDoc(doc(tableTwo, "games", gameId), { "tables.2": "table-two" }))
+  await assertFails(updateDoc(doc(tableTwo, "games", gameId), { "tables.3": "table-two" }))
 })
 
 test("keeps live results private to their claimed table", async () => {
@@ -137,6 +138,21 @@ test("prevents table devices from overwriting manual scores and reveals only aft
   await assertSucceeds(getDoc(doc(tableTwo, "games", gameId, "results", "board-1-ns-0")))
 })
 
+test("allows table devices to submit each board only once", async () => {
+  await seed({ ...game(), tables: { "1": "table-one" } })
+  const tableOne = environment.authenticatedContext("table-one").firestore()
+  const director = environment.authenticatedContext("director").firestore()
+  const resultRef = doc(tableOne, "games", gameId, "results", "board-1-ns-0")
+  await assertSucceeds(setDoc(resultRef, result()))
+  await assertFails(setDoc(resultRef, result({ updatedAt: 2 })))
+  await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director", updatedAt: 2 })))
+
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), "games", gameId), { status: "finished" })
+  })
+  await assertFails(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director", updatedAt: 3 })))
+})
+
 test("requires the canonical result document ID for directors", async () => {
   await seed()
   const director = environment.authenticatedContext("director").firestore()
@@ -150,4 +166,22 @@ test("rejects arbitrary player changes to a game", async () => {
   await assertFails(updateDoc(doc(player, "games", gameId), { status: "finished" }))
   await assertFails(updateDoc(doc(player, "games", gameId), { createdAt: 2 }))
   assert.ok(true)
+})
+
+test("keeps director identity and game setup immutable", async () => {
+  await seed({ ...game(), tables: { "1": "table-one" } })
+  const director = environment.authenticatedContext("director").firestore()
+  await assertFails(updateDoc(doc(director, "games", gameId), { directorUid: "replacement" }))
+  await assertFails(updateDoc(doc(director, "games", gameId), { "pairs.ns": ["Changed", "NS 2", "NS 3"] }))
+  await assertFails(updateDoc(doc(director, "games", gameId), { "tables.1": "replacement" }))
+  await assertSucceeds(updateDoc(doc(director, "games", gameId), { "tables.1": deleteField() }))
+})
+
+test("rejects malformed game setup during atomic creation", async () => {
+  const director = environment.authenticatedContext("director").firestore()
+  const batch = writeBatch(director)
+  batch.set(doc(director, "games", "bad-game"), { ...game(), pairs: { ns: { "0": "NS 1", "1": "NS 2", "2": "NS 3" }, ew: ["EW 1", "EW 2", "EW 3"] } })
+  batch.set(doc(director, "codes", "ABC234"), { gameId: "bad-game" })
+  batch.set(doc(director, "active-game", "current"), { gameId: "bad-game", directorUid: "director" })
+  await assertFails(batch.commit())
 })

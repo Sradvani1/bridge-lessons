@@ -53,15 +53,31 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['status', 'pairs', 'directorUid', 'tables', 'createdAt'])
         && request.resource.data.status == 'playing'
         && request.resource.data.directorUid == request.auth.uid
+        && request.resource.data.directorUid is string && request.resource.data.directorUid.size() <= 64
+        && request.resource.data.pairs is map
+        && request.resource.data.pairs.keys().hasOnly(['ns', 'ew'])
+        && request.resource.data.pairs.ns is list
+        && request.resource.data.pairs.ew is list
         && request.resource.data.pairs.ns.size() == 3
         && request.resource.data.pairs.ew.size() == 3
+        && request.resource.data.pairs.ns[0] is string && request.resource.data.pairs.ns[0].size() <= 60
+        && request.resource.data.pairs.ns[1] is string && request.resource.data.pairs.ns[1].size() <= 60
+        && request.resource.data.pairs.ns[2] is string && request.resource.data.pairs.ns[2].size() <= 60
+        && request.resource.data.pairs.ew[0] is string && request.resource.data.pairs.ew[0].size() <= 60
+        && request.resource.data.pairs.ew[1] is string && request.resource.data.pairs.ew[1].size() <= 60
+        && request.resource.data.pairs.ew[2] is string && request.resource.data.pairs.ew[2].size() <= 60
+        && request.resource.data.tables is map
         && request.resource.data.tables.keys().size() == 0
+        && request.resource.data.createdAt is int
         && getAfter(activeGamePath()).data.gameId == gameId
         && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
       function validTableClaim() {
         return gameData().status == 'playing'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tables'])
           && request.resource.data.tables.keys().hasOnly(['1', '2', '3'])
+          && !((('1' in gameData().tables.keys()) && gameData().tables['1'] == request.auth.uid)
+            || (('2' in gameData().tables.keys()) && gameData().tables['2'] == request.auth.uid)
+            || (('3' in gameData().tables.keys()) && gameData().tables['3'] == request.auth.uid))
           && ((request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['1'])
                 && !('1' in gameData().tables.keys())
                 && request.resource.data.tables['1'] == request.auth.uid)
@@ -72,17 +88,25 @@ service cloud.firestore {
                 && !('3' in gameData().tables.keys())
                 && request.resource.data.tables['3'] == request.auth.uid));
       }
-      function validDirectorUpdate() {
-        return isDirector() && (
-          request.resource.data.status == gameData().status
-          || (gameData().status == 'playing'
-              && request.resource.data.status in ['finished', 'cancelled']
-              && !existsAfter(activeGamePath()))
-        );
+      function validDirectorTableRelease() {
+        return isDirector()
+          && gameData().status == 'playing'
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['tables'])
+          && request.resource.data.tables.diff(gameData().tables).addedKeys().size() == 0
+          && request.resource.data.tables.diff(gameData().tables).changedKeys().size() == 0
+          && request.resource.data.tables.diff(gameData().tables).removedKeys().hasOnly(['1', '2', '3']);
+      }
+      function validGameClosure() {
+        return isDirector()
+          && gameData().status == 'playing'
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status in ['finished', 'cancelled']
+          && !existsAfter(activeGamePath());
       }
       // Table claims are immutable per device. Finishing or cancelling clears the active-game lock.
       allow update: if signedIn() && (
-        validDirectorUpdate()
+        validDirectorTableRelease()
+        || validGameClosure()
         || validTableClaim()
       );
       allow delete: if false;
@@ -131,7 +155,8 @@ service cloud.firestore {
             && request.resource.data.round is int && request.resource.data.round >= 0 && request.resource.data.round <= 2
             && request.resource.data.table is int && request.resource.data.table >= 1 && request.resource.data.table <= 3
             && request.resource.data.nsPairIndex is int && request.resource.data.ewPairIndex is int
-            && request.resource.data.updatedBy is string && request.resource.data.updatedAt is int
+            && request.resource.data.updatedBy is string && request.resource.data.updatedBy.size() <= 64
+            && request.resource.data.updatedAt is int && request.resource.data.updatedAt >= 0
             && correctMovement()
             && ((request.resource.data.kind == 'passed-out' && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'updatedBy', 'updatedAt']))
               || (request.resource.data.kind == 'manual' && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'manualScore', 'updatedBy', 'updatedAt']) && request.resource.data.manualScore is int && request.resource.data.manualScore >= -9999999 && request.resource.data.manualScore <= 9999999)
@@ -142,21 +167,20 @@ service cloud.firestore {
             + string(request.resource.data.nsPairIndex);
         }
 
-        // Director: always. Everyone: after reveal. Tables: their own rows until then.
+        // Director: live corrections. Everyone: after reveal. Tables: their own rows until then.
         allow read: if signedIn() && (
           request.auth.uid == live().directorUid
           || live().status == 'finished'
           || readsOwnResult()
         );
 
-        allow create: if signedIn() && (
+        allow create: if signedIn() && live().status == 'playing' && (
           (request.auth.uid == live().directorUid && validResult() && hasCanonicalResultId())
           || writesOwnResult()
         );
-        allow update: if signedIn() && (
-          (request.auth.uid == live().directorUid && validResult() && hasCanonicalResultId())
-          || (resource.data.kind != 'manual' && writesOwnResult())
-        );
+        allow update: if signedIn() && live().status == 'playing'
+          && request.auth.uid == live().directorUid
+          && validResult() && hasCanonicalResultId();
         allow delete: if false;
       }
     }

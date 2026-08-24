@@ -3,6 +3,7 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   runTransaction,
@@ -102,13 +103,20 @@ export async function finishGame(gameId: string): Promise<void> {
   const db = await getDb()
   const directorUid = await requireUserId()
   try {
+    const resultSnapshots = await getDocs(collection(db, "games", gameId, "results"))
+    if (resultSnapshots.size !== 36 || resultSnapshots.docs.some((result) => !parseStoredResult(result.data()))) {
+      throw new GameStoreError("Enter all 36 valid results before revealing the game.")
+    }
     await runTransaction(db, async (transaction) => {
       const activeGameRef = doc(db, ...ACTIVE_GAME_PATH)
-      const activeGame = await transaction.get(activeGameRef)
+      const gameRef = doc(db, "games", gameId)
+      const [activeGame, game] = await Promise.all([transaction.get(activeGameRef), transaction.get(gameRef)])
+      if (game.data()?.status === "finished") return
       if (activeGame.data()?.gameId !== gameId || activeGame.data()?.directorUid !== directorUid) {
         throw new GameStoreError("This is not the active game for this director.")
       }
-      transaction.update(doc(db, "games", gameId), { status: "finished" })
+      if (game.data()?.status !== "playing") throw new GameStoreError("This game is no longer available to finish.")
+      transaction.update(gameRef, { status: "finished" })
       transaction.delete(activeGameRef)
     })
   } catch (error) {
@@ -214,7 +222,7 @@ export type ResultsView =
 export function subscribeResults(
   gameId: string,
   view: ResultsView,
-  onData: (results: StoredResult[]) => void,
+  onData: (results: StoredResult[], hasPendingWrites: boolean) => void,
   onError: (error: Error) => void,
 ): () => void {
   let cancelled = false
@@ -224,6 +232,7 @@ export function subscribeResults(
       const constraints = view.viewer === "table" ? [where("nsPairIndex", "==", view.table - 1)] : []
       const nextUnsubscribe = onSnapshot(
         query(collection(db, "games", gameId, "results"), ...constraints),
+        { includeMetadataChanges: true },
         (snapshot) => {
           const results: StoredResult[] = []
           snapshot.forEach((entry) => {
@@ -233,7 +242,7 @@ export function subscribeResults(
           results.sort((left, right) =>
             left.boardNumber - right.boardNumber || left.nsPairIndex - right.nsPairIndex,
           )
-          onData(results)
+          onData(results, snapshot.metadata.hasPendingWrites)
         },
         onError,
       )
