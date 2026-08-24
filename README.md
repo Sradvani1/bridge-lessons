@@ -35,6 +35,8 @@ Without those values, `/play` shows a setup message and the lesson site continue
 
 Run `npm run test:rules` to start a disposable local Firestore emulator and verify table isolation, write validation, manual-score protection, reveal access, and atomic game-code creation. It uses the `demo-bridge` project ID and does not access a production Firebase project.
 
+Run `npm run test:load` for a non-mutating production smoke test against `https://bridge-lessons.vercel.app`. Override the target with `BASE_URL=https://example.com npm run test:load`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
