@@ -18,6 +18,7 @@ import {
   type StoredGame,
   type StoredResult,
 } from "./game-data"
+import { howellResultCount, type HowellTableCount } from "./howell"
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 const CODE_LENGTH = 6
@@ -34,7 +35,11 @@ function generateCode(): string {
   return Array.from(bytes, (byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]).join("")
 }
 
-export async function createGame(pairs: { ns: string[]; ew: string[] }): Promise<{ gameId: string; code: string }> {
+export type NewGame =
+  | { movement: "mitchell"; pairs: { ns: string[]; ew: string[] } }
+  | { movement: "howell"; tableCount: HowellTableCount; pairs: string[] }
+
+export async function createGame(game: NewGame): Promise<{ gameId: string; code: string }> {
   const db = await getDb()
   const directorUid = await requireUserId()
 
@@ -50,7 +55,7 @@ export async function createGame(pairs: { ns: string[]; ew: string[] }): Promise
         if (activeGameSnapshot.exists()) throw new GameStoreError("A duplicate game is already in progress. Join it with the director's code.")
         transaction.set(doc(db, "games", gameId), {
           status: "playing",
-          pairs: { ns: pairs.ns, ew: pairs.ew },
+          ...game,
           directorUid,
           tables: {},
           resultCount: 0,
@@ -104,18 +109,19 @@ export async function finishGame(gameId: string): Promise<void> {
   const directorUid = await requireUserId()
   try {
     const gameRef = doc(db, "games", gameId)
+    const gameSnapshot = await getDoc(gameRef)
+    const game = parseStoredGame(gameSnapshot.data())
+    const expectedResultCount = game?.movement === "howell" ? howellResultCount(game.tableCount) : 36
     const resultSnapshots = await getDocs(collection(db, "games", gameId, "results"))
-    if (resultSnapshots.size !== 36 || resultSnapshots.docs.some((result) => !parseStoredResult(result.data()))) {
-      throw new GameStoreError("Enter all 36 valid results before revealing the game.")
+    if (!game || resultSnapshots.size !== expectedResultCount || resultSnapshots.docs.some((result) => !parseStoredResult(result.data(), game))) {
+      throw new GameStoreError(`Enter all ${expectedResultCount} valid results before revealing the game.`)
     }
     await runTransaction(db, async (transaction) => {
       const activeGameRef = doc(db, ...ACTIVE_GAME_PATH)
-      const [activeGame, game] = await Promise.all([transaction.get(activeGameRef), transaction.get(gameRef)])
-      if (game.data()?.status === "finished") return
-      if (activeGame.data()?.gameId !== gameId || activeGame.data()?.directorUid !== directorUid) {
-        throw new GameStoreError("This is not the active game for this director.")
-      }
-      if (game.data()?.status !== "playing") throw new GameStoreError("This game is no longer available to finish.")
+      const [activeGame, liveGame] = await Promise.all([transaction.get(activeGameRef), transaction.get(gameRef)])
+      if (liveGame.data()?.status === "finished") return
+      if (activeGame.data()?.gameId !== gameId || activeGame.data()?.directorUid !== directorUid) throw new GameStoreError("This is not the active game for this director.")
+      if (liveGame.data()?.status !== "playing") throw new GameStoreError("This game is no longer available to finish.")
       transaction.update(gameRef, { status: "finished" })
       transaction.delete(activeGameRef)
     })
@@ -231,6 +237,7 @@ export type ResultsView =
 export function subscribeResults(
   gameId: string,
   view: ResultsView,
+  game: StoredGame,
   onData: (results: StoredResult[], hasPendingWrites: boolean) => void,
   onError: (error: Error) => void,
 ): () => void {
@@ -238,14 +245,16 @@ export function subscribeResults(
   let unsubscribe = () => {}
   getDb()
     .then((db) => {
-      const constraints = view.viewer === "table" ? [where("nsPairIndex", "==", view.table - 1)] : []
+      const constraints = view.viewer === "table"
+        ? [where(game.movement === "howell" ? "table" : "nsPairIndex", "==", game.movement === "howell" ? view.table : view.table - 1)]
+        : []
       const nextUnsubscribe = onSnapshot(
         query(collection(db, "games", gameId, "results"), ...constraints),
         { includeMetadataChanges: true },
         (snapshot) => {
           const results: StoredResult[] = []
           snapshot.forEach((entry) => {
-            const parsed = parseStoredResult(entry.data())
+            const parsed = parseStoredResult(entry.data(), game)
             if (parsed) results.push(parsed)
           })
           results.sort((left, right) =>

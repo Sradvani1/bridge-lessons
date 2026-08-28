@@ -3,6 +3,7 @@ import { after, afterEach, before, test } from "node:test"
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing"
 import { collection, deleteField, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
 import { boardNumbersAt, eastWestPairAt } from "../lib/mitchell"
+import { howellAssignments, howellResultCount } from "../lib/howell"
 
 const projectId = "demo-bridge"
 const gameId = "game-1"
@@ -12,6 +13,19 @@ function game(status: "playing" | "finished" = "playing") {
   return {
     status,
     pairs: { ns: ["NS 1", "NS 2", "NS 3"], ew: ["EW 1", "EW 2", "EW 3"] },
+    directorUid: "director",
+    tables: {},
+    resultCount: 0,
+    createdAt: 1,
+  }
+}
+
+function howellGame(tableCount: 2 | 3) {
+  return {
+    status: "playing" as const,
+    movement: "howell",
+    tableCount,
+    pairs: Array.from({ length: tableCount * 2 }, (_, index) => `Pair ${index + 1}`),
     directorUid: "director",
     tables: {},
     resultCount: 0,
@@ -33,7 +47,7 @@ function result(overrides: Record<string, unknown> = {}) {
   }
 }
 
-async function seed(data = game()) {
+async function seed(data: Record<string, unknown> = game()) {
   await environment.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), "games", gameId), data)
   })
@@ -65,6 +79,15 @@ test("allows atomic game and code creation only for the director", async () => {
 
   const player = environment.authenticatedContext("player").firestore()
   await assertFails(setDoc(doc(player, "codes", "DEF567"), { gameId: "game-created" }))
+})
+
+test("allows atomic Howell game creation for the selected table count", async () => {
+  const director = environment.authenticatedContext("director").firestore()
+  const batch = writeBatch(director)
+  batch.set(doc(director, "games", "howell-created"), howellGame(2))
+  batch.set(doc(director, "codes", "ABC234"), { gameId: "howell-created" })
+  batch.set(doc(director, "active-game", "current"), { gameId: "howell-created", directorUid: "director" })
+  await assertSucceeds(batch.commit())
 })
 
 test("rejects a second concurrent game", async () => {
@@ -108,6 +131,16 @@ test("requires a complete game before finishing or cancelling to release the act
   await assertSucceeds(cancel.commit())
 })
 
+test("allows the director to finish a complete Howell game", async () => {
+  await seed({ ...howellGame(2), resultCount: 12 })
+  await seedActiveGame()
+  const director = environment.authenticatedContext("director").firestore()
+  const finish = writeBatch(director)
+  finish.update(doc(director, "games", gameId), { status: "finished" })
+  finish.delete(doc(director, "active-game", "current"))
+  await assertSucceeds(finish.commit())
+})
+
 test("allows only one device to claim each table", async () => {
   await seed()
   const tableOne = environment.authenticatedContext("table-one").firestore()
@@ -116,6 +149,55 @@ test("allows only one device to claim each table", async () => {
   await assertFails(updateDoc(doc(tableTwo, "games", gameId), { "tables.1": "table-two" }))
   await assertSucceeds(updateDoc(doc(tableTwo, "games", gameId), { "tables.2": "table-two" }))
   await assertFails(updateDoc(doc(tableTwo, "games", gameId), { "tables.3": "table-two" }))
+})
+
+test("enforces configured Howell table claims and table-scoped live results", async () => {
+  await seed(howellGame(2))
+  const tableOne = environment.authenticatedContext("table-one").firestore()
+  const tableTwo = environment.authenticatedContext("table-two").firestore()
+  const tableThree = environment.authenticatedContext("table-three").firestore()
+  await assertSucceeds(updateDoc(doc(tableOne, "games", gameId), { "tables.1": "table-one" }))
+  await assertSucceeds(updateDoc(doc(tableTwo, "games", gameId), { "tables.2": "table-two" }))
+  await assertFails(updateDoc(doc(tableThree, "games", gameId), { "tables.3": "table-three" }))
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), "games", gameId, "results", "board-1-ns-0"), result({ ewPairIndex: 3 }))
+  })
+  await assertSucceeds(getDocs(query(collection(tableOne, "games", gameId, "results"), where("table", "==", 1))))
+  await assertFails(getDocs(query(collection(tableTwo, "games", gameId, "results"), where("table", "==", 1))))
+})
+
+test("accepts only scheduled Howell results", async () => {
+  await seed(howellGame(3))
+  const director = environment.authenticatedContext("director").firestore()
+  await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ ewPairIndex: 5, updatedBy: "director" })))
+  await assertFails(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ ewPairIndex: 4, updatedBy: "director" })))
+})
+
+test("allows a Howell table device to write its rotating North-South pair", async () => {
+  await seed({ ...howellGame(2), tables: { "2": "table-two" } })
+  const tableTwo = environment.authenticatedContext("table-two").firestore()
+  const write = writeBatch(tableTwo)
+  write.set(doc(tableTwo, "games", gameId, "results", "board-3-ns-3"), result({ boardNumber: 3, round: 1, table: 2, nsPairIndex: 3, ewPairIndex: 1, updatedBy: "table-two" }))
+  await assertSucceeds(write.commit())
+})
+
+test("rehearses every scorer through complete two- and three-table Howell games", async () => {
+  for (const tableCount of [2, 3] as const) {
+    await environment.clearFirestore()
+    await seed(howellGame(tableCount))
+    const scorers = Array.from({ length: tableCount }, (_, index) => environment.authenticatedContext(`howell-${tableCount}-table-${index + 1}`).firestore())
+    for (const [index, scorer] of scorers.entries()) await assertSucceeds(updateDoc(doc(scorer, "games", gameId), { [`tables.${index + 1}`]: `howell-${tableCount}-table-${index + 1}` }))
+    for (const assignment of howellAssignments(tableCount)) {
+      const scorer = scorers[assignment.table - 1]
+      for (const boardNumber of assignment.boardNumbers) {
+        await assertSucceeds(setDoc(doc(scorer, "games", gameId, "results", `board-${boardNumber}-ns-${assignment.nsPairIndex}`), result({ boardNumber, round: assignment.round, table: assignment.table, nsPairIndex: assignment.nsPairIndex, ewPairIndex: assignment.ewPairIndex, updatedBy: `howell-${tableCount}-table-${assignment.table}` })))
+      }
+    }
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const snapshot = await getDocs(collection(context.firestore(), "games", gameId, "results"))
+      assert.equal(snapshot.size, howellResultCount(tableCount))
+    })
+  }
 })
 
 test("keeps live results private to their claimed table", async () => {
@@ -136,7 +218,6 @@ test("rejects foreign and movement-invalid result writes", async () => {
   const tableOne = environment.authenticatedContext("table-one").firestore()
   const firstResult = writeBatch(tableOne)
   firstResult.set(doc(tableOne, "games", gameId, "results", "board-1-ns-0"), result())
-  firstResult.update(doc(tableOne, "games", gameId), { resultCount: 1 })
   await assertSucceeds(firstResult.commit())
   await assertFails(setDoc(doc(tableOne, "games", gameId, "results", "board-5-ns-0"), result({ boardNumber: 5 })))
   await assertFails(setDoc(doc(tableOne, "games", gameId, "results", "board-5-ns-1"), result({ boardNumber: 5, table: 2, nsPairIndex: 1, ewPairIndex: 1 })))
@@ -164,7 +245,6 @@ test("allows table devices to submit each board only once", async () => {
   const resultRef = doc(tableOne, "games", gameId, "results", "board-1-ns-0")
   const firstResult = writeBatch(tableOne)
   firstResult.set(resultRef, result())
-  firstResult.update(doc(tableOne, "games", gameId), { resultCount: 1 })
   await assertSucceeds(firstResult.commit())
   await assertFails(setDoc(resultRef, result({ updatedAt: 2 })))
   await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director", updatedAt: 2 })))
@@ -181,7 +261,6 @@ test("requires the canonical result document ID for directors", async () => {
   await assertFails(setDoc(doc(director, "games", gameId, "results", "alternate-result"), result({ updatedBy: "director" })))
   const directorResult = writeBatch(director)
   directorResult.set(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ updatedBy: "director" }))
-  directorResult.update(doc(director, "games", gameId), { resultCount: 1 })
   await assertSucceeds(directorResult.commit())
 })
 
@@ -211,11 +290,10 @@ test("rejects malformed game setup during atomic creation", async () => {
   await assertFails(batch.commit())
 })
 
-test("rehearses three scorers through a complete game", async () => {
+test("rehearses three scorers through a complete Mitchell game", async () => {
   await seed()
   await seedActiveGame()
   const tables = [1, 2, 3].map((table) => environment.authenticatedContext(`table-${table}`).firestore())
-  const director = environment.authenticatedContext("director").firestore()
 
   for (const [index, tableFirestore] of tables.entries()) {
     const table = index + 1
@@ -228,17 +306,11 @@ test("rehearses three scorers through a complete game", async () => {
       for (const boardNumber of boardNumbersAt(table as 1 | 2 | 3, round)) {
         const nsPairIndex = table - 1
         const resultId = `board-${boardNumber}-ns-${nsPairIndex}`
-        const gameSnapshot = await getDoc(doc(tableFirestore, "games", gameId))
         const batch = writeBatch(tableFirestore)
         batch.set(doc(tableFirestore, "games", gameId, "results", resultId), result({ boardNumber, round, table, nsPairIndex, ewPairIndex: eastWestPairAt(table as 1 | 2 | 3, round) - 1, updatedBy: `table-${table}` }))
-        batch.update(doc(tableFirestore, "games", gameId), { resultCount: (gameSnapshot.data()?.resultCount as number) + 1 })
         await assertSucceeds(batch.commit())
       }
     }
   }
 
-  const finish = writeBatch(director)
-  finish.update(doc(director, "games", gameId), { status: "finished" })
-  finish.delete(doc(director, "active-game", "current"))
-  await assertSucceeds(finish.commit())
 })

@@ -1,5 +1,6 @@
 import { competitionRanks, rankBoardResults, type BoardResult } from "./bridge-scoring"
 import { MAX_TOTAL_MATCHPOINTS } from "./mitchell"
+import { howellBoardCount, type HowellTableCount } from "./howell"
 import { deriveNsScore, type StoredResult } from "./game-data"
 
 export type StandingsRow = {
@@ -90,6 +91,37 @@ export function computeStandings(
 
 export function matchpointPercentage(totalMatchpoints: number): number {
   return Math.round((totalMatchpoints / MAX_TOTAL_MATCHPOINTS) * 1000) / 10
+}
+
+export function computeHowellStandings(results: readonly StoredResult[], pairs: readonly string[]): StandingsRow[] {
+  const byBoard = new Map<number, StoredResult[]>()
+  for (const result of results) {
+    if (deriveNsScore(result) === null) continue
+    const boardResults = byBoard.get(result.boardNumber) ?? []
+    boardResults.push(result)
+    byBoard.set(result.boardNumber, boardResults)
+  }
+
+  const totals = Array.from({ length: pairs.length }, () => 0)
+  const played = Array.from({ length: pairs.length }, () => 0)
+  for (const boardResults of byBoard.values()) {
+    const matchpointsByTable = new Map(rankBoardResults(boardResults.map((entry) => ({ id: String(entry.table), label: "", nsScore: deriveNsScore(entry) ?? 0 }))).map((entry) => [Number(entry.id), entry.matchpoints]))
+    for (const result of boardResults) {
+      const score = deriveNsScore(result)
+      if (score === null) continue
+      const matchpoints = matchpointsByTable.get(result.table) ?? 0
+      totals[result.nsPairIndex] += matchpoints
+      totals[result.ewPairIndex] += (boardResults.length - 1) * 2 - matchpoints
+      played[result.nsPairIndex] += 1
+      played[result.ewPairIndex] += 1
+    }
+  }
+  return buildRows(pairs, totals, played)
+}
+
+export function howellMatchpointPercentage(totalMatchpoints: number, tableCount: HowellTableCount): number {
+  const maximum = howellBoardCount(tableCount) * (tableCount - 1) * 2
+  return Math.round((totalMatchpoints / maximum) * 1000) / 10
 }
 
 export const TOTAL_PAIR_COUNT = PAIR_COUNT

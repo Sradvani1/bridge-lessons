@@ -8,7 +8,8 @@ import { deriveNsScore, type ResultKind, type StoredGame, type StoredResult } fr
 import { cancelGame, claimTable, finishGame, releaseTable, saveResult, subscribeGame, subscribeResults, type ResultInput } from "@/lib/game-store"
 import { requireUserId } from "@/lib/firebase"
 import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, type RoundIndex } from "@/lib/mitchell"
-import { computeStandings, matchpointPercentage } from "@/lib/standings"
+import { howellAssignmentAt, howellAssignments, howellResultCount, howellRoundCount } from "@/lib/howell"
+import { computeHowellStandings, computeStandings, howellMatchpointPercentage, matchpointPercentage, type StandingsRow } from "@/lib/standings"
 
 const GameJoinQr = dynamic(() => import("@/components/game-join-qr"), { ssr: false })
 
@@ -52,7 +53,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const [results, setResults] = useState<StoredResult[]>([])
   const [resultsHavePendingWrites, setResultsHavePendingWrites] = useState(false)
   const [selectedTable, setSelectedTable] = useState<number | null>(null)
-  const [round, setRound] = useState<RoundIndex>(0)
+  const [round, setRound] = useState(0)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [director, setDirector] = useState(false)
@@ -76,7 +77,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     setGameConnectionError("")
     setGameHasPendingWrites(hasPendingWrites)
     const nextClaimedTable = next && userIdRef.current
-      ? [1, 2, 3].find((number) => next.tables[String(number)] === userIdRef.current) ?? null
+      ? Array.from({ length: next.movement === "howell" ? next.tableCount : 3 }, (_, index) => index + 1).find((number) => next.tables[String(number)] === userIdRef.current) ?? null
       : null
     if (nextClaimedTable) {
       setClaimingTable(null)
@@ -111,10 +112,11 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   }, [directorUid])
 
   const claimedTable = game && userId
-    ? [1, 2, 3].find((number) => game.tables[String(number)] === userId) ?? null
+    ? Array.from({ length: game.movement === "howell" ? game.tableCount : 3 }, (_, index) => index + 1).find((number) => game.tables[String(number)] === userId) ?? null
     : null
   const table = director ? selectedTable : claimedTable
-  const ewPair = table ? eastWestPairAt(table as 1 | 2 | 3, round) : null
+  const howellAssignment = game?.movement === "howell" && table ? howellAssignmentAt(game.tableCount, table, round) : null
+  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, round as RoundIndex) : null
   const resultsTable = director ? selectedTable : claimedTable
 
   useEffect(() => {
@@ -123,15 +125,15 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
 
   const gameStatus = game?.status
   useEffect(() => {
-    if (!gameStatus) return
+    if (!gameStatus || !game) return
     const view = director || gameStatus === "finished"
       ? { viewer: "director-or-finished" as const }
       : resultsTable ? { viewer: "table" as const, table: resultsTable } : null
-    return view ? subscribeResults(gameId, view, (next, hasPendingWrites) => {
+    return view ? subscribeResults(gameId, view, game, (next, hasPendingWrites) => {
       setResults(next)
       setResultsHavePendingWrites(hasPendingWrites)
     }, (next) => setError(next.message)) : undefined
-  }, [director, gameId, gameStatus, resultsTable])
+  }, [director, game, gameId, gameStatus, resultsTable])
 
   async function chooseTable(nextTable: number) {
     if (!userId || !game || game.status !== "playing" || claimingTable) return
@@ -155,8 +157,9 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   }
 
   async function finish() {
-    if (results.length !== 36) {
-      setError(`Enter all 36 results before revealing. ${36 - results.length} remain.`)
+    const expectedResultCount = game?.movement === "howell" ? howellResultCount(game.tableCount) : 36
+    if (results.length !== expectedResultCount) {
+      setError(`Enter all ${expectedResultCount} results before revealing. ${expectedResultCount - results.length} remain.`)
       return
     }
     setFinishing(true)
@@ -207,11 +210,15 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   if (!game) return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">{gameConnectionError ? "Could Not Connect" : "Game Not Found"}</h1><p className="mt-3 text-[#52615a]">{gameConnectionError ? "Check the connection, then try again." : "This link is invalid or the game is no longer available."}</p>{gameConnectionError ? <p role="alert" className="mt-4 rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{gameConnectionError}</p> : null}<div className="mt-5 flex flex-wrap gap-3">{gameConnectionError ? <button type="button" onClick={retryGame} className="min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Try Again</button> : null}<button type="button" onClick={() => router.push("/play")} className="min-h-12 rounded-xl border border-[#1d5138] px-5 font-bold text-[#173c2a]">Back to Game Lobby</button></div></section>
   if (game.status === "cancelled") return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Cancelled</h1><p className="mt-3 text-[#52615a]">This game is no longer active. Start or join the current class game from the lobby.</p><button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
 
-  const standings = computeStandings(results, game.pairs)
+  const standings = game.movement === "howell" ? null : computeStandings(results, game.pairs)
+  const howellStandings = game.movement === "howell" ? computeHowellStandings(results, game.pairs) : null
+  const howellTableCount = game.movement === "howell" ? game.tableCount : null
+  const tableNumbers = Array.from({ length: game.movement === "howell" ? game.tableCount : 3 }, (_, index) => index + 1)
+  const expectedResultCount = game.movement === "howell" ? howellResultCount(game.tableCount) : 36
   const canSeeResults = director || game.status === "finished"
   const progress = director || game.status === "finished"
-    ? `${results.length} of 36 table results entered.`
-    : table ? `${results.length} of 12 results entered at your table.` : "Choose a table to enter results."
+    ? `${results.length} of ${expectedResultCount} table results entered.`
+    : table ? `${results.length} of ${expectedResultCount / tableNumbers.length} results entered at your table.` : "Choose a table to enter results."
 
   return <div className="space-y-6">
     <p aria-live="polite" className="sr-only">{message}</p>
@@ -223,9 +230,9 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
           <p className="mt-1 text-[#52615a]">{progress}</p>
           {director && joinCode ? <p className="mt-3 inline-flex rounded-lg bg-white px-3 py-2 font-bold tracking-[.18em] text-[#123a28]">Join code: {joinCode}</p> : null}
         </div>
-        {director && game.status === "playing" ? <div className="flex flex-wrap gap-3"><button type="button" disabled={results.length !== 36 || finishing || cancelling} onClick={finish} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{finishing ? "Revealing..." : results.length === 36 ? "Finish & Reveal" : `${36 - results.length} Results Remaining`}</button><button type="button" disabled={finishing || cancelling} onClick={cancel} className="min-h-12 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27] disabled:border-[#c9a5a0] disabled:text-[#a9807b]">{cancelling ? "Cancelling..." : "Cancel Game"}</button></div> : null}
+        {director && game.status === "playing" ? <div className="flex flex-wrap gap-3"><button type="button" disabled={results.length !== expectedResultCount || finishing || cancelling} onClick={finish} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{finishing ? "Revealing..." : results.length === expectedResultCount ? "Finish & Reveal" : `${expectedResultCount - results.length} Results Remaining`}</button><button type="button" disabled={finishing || cancelling} onClick={cancel} className="min-h-12 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27] disabled:border-[#c9a5a0] disabled:text-[#a9807b]">{cancelling ? "Cancelling..." : "Cancel Game"}</button></div> : null}
       </div>
-      {director ? <div className="mt-5 border-t border-[#cbd5cc] pt-5"><GameJoinQr gameId={gameId} /></div> : null}
+      {director ? <div className="mt-5 border-t border-[#cbd5cc] pt-5"><GameJoinQr gameId={gameId} />{game.movement === "howell" ? <HowellMovementCard pairs={game.pairs} tableCount={game.tableCount} /> : null}</div> : null}
     </section>
 
     {gameHasPendingWrites || resultsHavePendingWrites ? <p role="status" className="rounded-xl bg-[#fff8df] p-4 font-semibold text-[#6b4b08]">Saving your latest change. Keep this page open until this message disappears.</p> : null}
@@ -234,31 +241,36 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     {!table && !director && identityReady && game.status === "playing" ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Choose Your Table</h2>
       <p className="mt-2 text-[#52615a]">Use one phone per table. Ask the director to release a table when replacing a device.</p>
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">{[1, 2, 3].map((number) => <button key={number} type="button" disabled={Boolean(game.tables[String(number)]) || claimingTable !== null} onClick={() => chooseTable(number)} className="min-h-16 rounded-xl border-2 border-[#1d5138] font-bold text-[#173c2a] hover:bg-[#edf4ef] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{claimingTable === number ? `Claiming Table ${number}...` : game.tables[String(number)] ? `Table ${number} in use` : `Table ${number}`}</button>)}</div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">{tableNumbers.map((number) => <button key={number} type="button" disabled={Boolean(game.tables[String(number)]) || claimingTable !== null} onClick={() => chooseTable(number)} className="min-h-16 rounded-xl border-2 border-[#1d5138] font-bold text-[#173c2a] hover:bg-[#edf4ef] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{claimingTable === number ? `Claiming Table ${number}...` : game.tables[String(number)] ? `Table ${number} in use` : `Table ${number}`}</button>)}</div>
     </section> : null}
 
     {director && !table ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Director Entry</h2>
       <p className="mt-2 text-[#52615a]">Choose a table to enter or correct a result, including a manual director score.</p>
-      <div className="mt-4 flex flex-wrap gap-3">{[1, 2, 3].map((number) => <button key={number} type="button" onClick={() => setSelectedTable(number)} className="min-h-12 rounded-xl border border-[#1d5138] px-4 font-bold text-[#173c2a]">Table {number}</button>)}</div>
-      <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{[1, 2, 3].map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" disabled={releasingTable !== null} onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{releasingTable === number ? "Releasing..." : "Release"}</button> : null}</div>)}</div>
+      <div className="mt-4 flex flex-wrap gap-3">{tableNumbers.map((number) => <button key={number} type="button" onClick={() => setSelectedTable(number)} className="min-h-12 rounded-xl border border-[#1d5138] px-4 font-bold text-[#173c2a]">Table {number}</button>)}</div>
+      <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{tableNumbers.map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" disabled={releasingTable !== null} onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{releasingTable === number ? "Releasing..." : "Release"}</button> : null}</div>)}</div>
     </section> : null}
 
-    {table && ewPair ? <TableEntry gameId={gameId} table={table} nsLabel={game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={round} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
+    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={round} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
 
     <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Standings</h2>
-      {canSeeResults ? <div className="mt-4 grid gap-5 md:grid-cols-2"><StandingsTable title="North-South" rows={standings.ns} /><StandingsTable title="East-West" rows={standings.ew} /></div> : <p className="mt-3 leading-7 text-[#52615a]">Scores will appear here when the director finishes and reveals the game.</p>}
+      {canSeeResults ? howellStandings && howellTableCount ? <div className="mt-4"><StandingsTable title="Pairs" rows={howellStandings} tableCount={howellTableCount} /></div> : standings ? <div className="mt-4 grid gap-5 md:grid-cols-2"><StandingsTable title="North-South" rows={standings.ns} /><StandingsTable title="East-West" rows={standings.ew} /></div> : null : <p className="mt-3 leading-7 text-[#52615a]">Scores will appear here when the director finishes and reveals the game.</p>}
     </section>
 
     {canSeeResults ? <Traveller results={results} /> : null}
   </div>
 }
 
-function StandingsTable({ title, rows }: { title: string; rows: ReturnType<typeof computeStandings>["ns"] }) {
+function StandingsTable({ title, rows, tableCount }: { title: string; rows: StandingsRow[]; tableCount?: 2 | 3 }) {
   return <div><h3 className="font-bold text-[#173c2a]">{title}</h3><div className="mt-2 space-y-2">
-    {[...rows].sort((left, right) => left.place - right.place || left.pairIndex - right.pairIndex).map((row) => <div key={row.pairIndex} className="flex justify-between rounded-lg bg-[#f3f7f3] px-3 py-3"><span>#{row.place} {row.label || `${title} ${row.pairIndex + 1}`}</span><span className="tabular-nums font-bold">{row.totalMatchpoints}/48 · {matchpointPercentage(row.totalMatchpoints)}% · {row.boardsPlayed}/12</span></div>)}
+    {[...rows].sort((left, right) => left.place - right.place || left.pairIndex - right.pairIndex).map((row) => <div key={row.pairIndex} className="flex justify-between rounded-lg bg-[#f3f7f3] px-3 py-3"><span>#{row.place} {row.label || `${title} ${row.pairIndex + 1}`}</span><span className="tabular-nums font-bold">{row.totalMatchpoints}{tableCount ? ` · ${howellMatchpointPercentage(row.totalMatchpoints, tableCount)}% · ${row.boardsPlayed}` : `/48 · ${matchpointPercentage(row.totalMatchpoints)}% · ${row.boardsPlayed}/12`}</span></div>)}
   </div></div>
+}
+
+function HowellMovementCard({ pairs, tableCount }: { pairs: readonly string[]; tableCount: 2 | 3 }) {
+  const assignments = howellAssignments(tableCount)
+  return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1} · Boards {assignments.find((assignment) => assignment.round === round)?.boardNumbers.join("-")}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
 }
 
 function Traveller({ results }: { results: StoredResult[] }) {
@@ -277,13 +289,16 @@ function Traveller({ results }: { results: StoredResult[] }) {
   </div></section>
 }
 
-function TableEntry({ gameId, table, nsLabel, ewLabel, round, setRound, results, onError, director, locked, onBack }: { gameId: string; table: number; nsLabel: string; ewLabel: string; round: RoundIndex; setRound: (round: RoundIndex) => void; results: StoredResult[]; onError: (error: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
-  const boards = boardNumbersAt(table as 1 | 2 | 3, round)
-  const ewPair = eastWestPairAt(table as 1 | 2 | 3, round)
-  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}. East-West moves to the next higher table; pass boards to the next lower table.</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div><div className="mt-4 grid grid-cols-3 gap-2">{([0, 1, 2] as RoundIndex[]).map((value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === table - 1); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} table={table} round={round} board={board} ewPair={ewPair} existing={existing} onError={onError} director={director} locked={locked} /> })}</div></section>
+function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, director, locked, onBack }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
+  const assignment = game.movement === "howell" ? howellAssignmentAt(game.tableCount, table, round) : null
+  const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3, round as RoundIndex)
+  const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, round as RoundIndex)
+  const nsPairIndex = assignment?.nsPairIndex ?? table - 1
+  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : 3
+  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Follow the Howell movement card for pair and board changes." : " East-West moves to the next higher table; pass boards to the next lower table."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div><div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} director={director} locked={locked} /> })}</div></section>
 }
 
-function BoardCard({ gameId, table, round, board, ewPair, existing, onError, director, locked }: { gameId: string; table: number; round: RoundIndex; board: number; ewPair: number; existing?: StoredResult; onError: (error: string) => void; director: boolean; locked: boolean }) {
+function BoardCard({ gameId, table, round, board, ewPair, nsPairIndex, existing, onError, director, locked }: { gameId: string; table: number; round: number; board: number; ewPair: number; nsPairIndex: number; existing?: StoredResult; onError: (error: string) => void; director: boolean; locked: boolean }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<FormState>(() => existing ? formFor(existing) : initialForm)
   const [saving, setSaving] = useState(false)
@@ -295,9 +310,9 @@ function BoardCard({ gameId, table, round, board, ewPair, existing, onError, dir
     const tricks = numberValue(form.tricks)
     const manualScore = numberValue(form.manualScore)
     let input: ResultInput | null = null
-    if (form.kind === "passed-out") input = { boardNumber: board, round, table, nsPairIndex: table - 1, ewPairIndex: ewPair - 1, kind: "passed-out" }
-    else if (form.kind === "manual" && director && manualScore !== null) input = { boardNumber: board, round, table, nsPairIndex: table - 1, ewPairIndex: ewPair - 1, kind: "manual", manualScore }
-    else if (form.kind === "contract" && level !== null && tricks !== null) input = { boardNumber: board, round, table, nsPairIndex: table - 1, ewPairIndex: ewPair - 1, kind: "contract", level, tricks, strain: form.strain, declarer: form.declarer, doubling: form.doubling }
+    if (form.kind === "passed-out") input = { boardNumber: board, round, table, nsPairIndex, ewPairIndex: ewPair - 1, kind: "passed-out" }
+    else if (form.kind === "manual" && director && manualScore !== null) input = { boardNumber: board, round, table, nsPairIndex, ewPairIndex: ewPair - 1, kind: "manual", manualScore }
+    else if (form.kind === "contract" && level !== null && tricks !== null) input = { boardNumber: board, round, table, nsPairIndex, ewPairIndex: ewPair - 1, kind: "contract", level, tricks, strain: form.strain, declarer: form.declarer, doubling: form.doubling }
     if (!input) return onError(form.kind === "manual" ? "Enter a whole-number North-South score." : "Complete the contract and tricks before saving.")
     setSaving(true)
     try {

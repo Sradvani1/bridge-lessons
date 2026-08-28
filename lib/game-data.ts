@@ -1,4 +1,5 @@
 import { calculateDuplicateScore, type DeclarerSide, type Doubling, type Strain } from "./bridge-scoring"
+import { howellPairCount, isHowellAssignment, isHowellTableCount, type HowellTableCount } from "./howell"
 import { boardNumbersAt, boardVulnerability, eastWestPairAt, isRoundIndex, isTableNumber, type GameStatus } from "./mitchell"
 
 export type ResultKind = "contract" | "passed-out" | "manual"
@@ -20,17 +21,20 @@ export type StoredResult = {
   updatedAt: number
 }
 
-export type GamePairs = {
+export type MitchellPairs = {
   ns: string[]
   ew: string[]
 }
 
-export type StoredGame = {
+type GameBase = {
   status: GameStatus
-  pairs: GamePairs
   directorUid: string
   tables: Record<string, string>
 }
+
+export type MitchellGame = GameBase & { movement?: "mitchell"; pairs: MitchellPairs }
+export type HowellGame = GameBase & { movement: "howell"; tableCount: HowellTableCount; pairs: string[] }
+export type StoredGame = MitchellGame | HowellGame
 
 const strains = new Set<Strain>(["C", "D", "H", "S", "NT"])
 const declarers = new Set<DeclarerSide>(["ns", "ew"])
@@ -63,14 +67,15 @@ export function resultDocumentId(boardNumber: number, nsPairIndex: number): stri
   return `board-${boardNumber}-ns-${nsPairIndex}`
 }
 
-export function parseStoredResult(raw: unknown): StoredResult | null {
+export function parseStoredResult(raw: unknown, game?: StoredGame): StoredResult | null {
   if (!isRecord(raw)) return null
 
-  const boardNumber = intIn(raw, "boardNumber", 1, 12)
-  const round = intIn(raw, "round", 0, 2)
-  const table = intIn(raw, "table", 1, 3)
-  const nsPairIndex = intIn(raw, "nsPairIndex", 0, 2)
-  const ewPairIndex = intIn(raw, "ewPairIndex", 0, 2)
+  const tableCount = game?.movement === "howell" ? game.tableCount : 3
+  const boardNumber = intIn(raw, "boardNumber", 1, game?.movement === "howell" ? tableCount === 2 ? 6 : 10 : 12)
+  const round = intIn(raw, "round", 0, game?.movement === "howell" ? tableCount === 2 ? 2 : 4 : 2)
+  const table = intIn(raw, "table", 1, tableCount)
+  const nsPairIndex = intIn(raw, "nsPairIndex", 0, tableCount * 2 - 1)
+  const ewPairIndex = intIn(raw, "ewPairIndex", 0, tableCount * 2 - 1)
   const updatedBy = uid(raw.updatedBy)
   const updatedAt = intIn(raw, "updatedAt", 0, Number.MAX_SAFE_INTEGER)
   const kind = enumIn(raw, "kind", kinds)
@@ -82,7 +87,10 @@ export function parseStoredResult(raw: unknown): StoredResult | null {
     return null
   }
 
-  if (!isTableNumber(table) || !isRoundIndex(round) || nsPairIndex !== table - 1 || ewPairIndex !== eastWestPairAt(table, round) - 1 || !boardNumbersAt(table, round).includes(boardNumber)) {
+  const validMovement = game?.movement === "howell"
+    ? isHowellAssignment(game.tableCount, table, round, nsPairIndex, ewPairIndex, boardNumber)
+    : isTableNumber(table) && isRoundIndex(round) && nsPairIndex === table - 1 && ewPairIndex === eastWestPairAt(table, round) - 1 && boardNumbersAt(table, round).includes(boardNumber)
+  if (!validMovement) {
     return null
   }
 
@@ -125,8 +133,23 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
   if (status !== "playing" && status !== "finished" && status !== "cancelled") return null
   const directorUid = uid(raw.directorUid)
   if (!directorUid) return null
+  const movement = raw.movement
+  if (movement === "howell") {
+    const tableCount = raw.tableCount
+    if (typeof tableCount !== "number" || !isHowellTableCount(tableCount) || !Array.isArray(raw.pairs) || raw.pairs.length !== howellPairCount(tableCount)) return null
+    const pairs: string[] = []
+    for (const item of raw.pairs) {
+      const parsedLabel = label(item)
+      if (parsedLabel === null) return null
+      pairs.push(parsedLabel)
+    }
+    const tables = parseTables(raw.tables, tableCount)
+    return tables ? { status, pairs, directorUid, tables, movement, tableCount } : null
+  }
+
+  if (movement !== undefined && movement !== "mitchell") return null
   if (!isRecord(raw.pairs)) return null
-  const pairs: GamePairs = { ns: [], ew: [] }
+  const pairs: MitchellPairs = { ns: [], ew: [] }
   for (const direction of ["ns", "ew"] as const) {
     const list = raw.pairs[direction]
     if (!Array.isArray(list) || list.length !== 3) return null
@@ -137,13 +160,17 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
     }
   }
 
-  const tables: Record<string, string> = {}
-  if (!isRecord(raw.tables)) return null
-  const tableEntries = Object.entries(raw.tables)
-  if (!tableEntries.every(([key, value]) => ["1", "2", "3"].includes(key) && uid(value))) return null
-  for (const [table, value] of tableEntries) tables[table] = value as string
+  const tables = parseTables(raw.tables, 3)
+  return tables ? { status, pairs, directorUid, tables, ...(movement === "mitchell" ? { movement } : {}) } : null
+}
 
-  return { status, pairs, directorUid, tables }
+function parseTables(raw: unknown, tableCount: number): Record<string, string> | null {
+  const tables: Record<string, string> = {}
+  if (!isRecord(raw)) return null
+  const tableEntries = Object.entries(raw)
+  if (!tableEntries.every(([key, value]) => Number.isInteger(Number(key)) && Number(key) >= 1 && Number(key) <= tableCount && uid(value))) return null
+  for (const [table, value] of tableEntries) tables[table] = value as string
+  return tables
 }
 
 export function deriveNsScore(result: StoredResult): number | null {
