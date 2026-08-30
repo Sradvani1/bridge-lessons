@@ -48,10 +48,21 @@ test("matches the photographed three-table Baron Barclay Howell cards", () => {
   ])
 })
 
+test("matches the photographed two-table Howell cards", () => {
+  assert.deepEqual(howellAssignments(2), [
+    { table: 1, round: 0, nsPairIndex: 0, ewPairIndex: 1, boardNumbers: [1, 2, 3, 4] },
+    { table: 2, round: 0, nsPairIndex: 2, ewPairIndex: 3, boardNumbers: [1, 2, 3, 4] },
+    { table: 1, round: 1, nsPairIndex: 0, ewPairIndex: 2, boardNumbers: [5, 6, 7, 8] },
+    { table: 2, round: 1, nsPairIndex: 1, ewPairIndex: 3, boardNumbers: [5, 6, 7, 8] },
+    { table: 1, round: 2, nsPairIndex: 0, ewPairIndex: 3, boardNumbers: [9, 10, 11, 12] },
+    { table: 2, round: 2, nsPairIndex: 1, ewPairIndex: 2, boardNumbers: [9, 10, 11, 12] },
+  ])
+})
+
 test("parses only results that match a Howell movement card", () => {
   const game = parseStoredGame({ status: "playing", movement: "howell", tableCount: 2, pairs: ["Pair 1", "Pair 2", "Pair 3", "Pair 4"], directorUid: "director", tables: {} })
   assert.ok(game && game.movement === "howell")
-  assert.ok(parseStoredResult({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 0, ewPairIndex: 3, kind: "passed-out", updatedBy: "table-one", updatedAt: 1 }, game))
+  assert.ok(parseStoredResult({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 0, ewPairIndex: 1, kind: "passed-out", updatedBy: "table-one", updatedAt: 1 }, game))
   assert.equal(parseStoredResult({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 0, ewPairIndex: 2, kind: "passed-out", updatedBy: "table-one", updatedAt: 1 }, game), null)
 })
 

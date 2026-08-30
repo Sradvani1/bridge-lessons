@@ -179,7 +179,7 @@ test("requires a complete game before finishing or cancelling to release the act
 })
 
 test("allows the director to finish a complete Howell game", async () => {
-  await seed({ ...howellGame(2), resultCount: 12 })
+  await seed({ ...howellGame(2), resultCount: 24 })
   await seedActiveGame()
   const director = environment.authenticatedContext("director").firestore()
   const finish = writeBatch(director)
@@ -230,7 +230,7 @@ test("allows a Howell table device to write its rotating North-South pair", asyn
   await seed({ ...howellGame(2), tables: { "2": "table-two" } })
   const tableTwo = environment.authenticatedContext("table-two").firestore()
   const write = writeBatch(tableTwo)
-  write.set(doc(tableTwo, "games", gameId, "results", "board-3-ns-3"), result({ boardNumber: 3, round: 1, table: 2, nsPairIndex: 3, ewPairIndex: 1, updatedBy: "table-two" }))
+  write.set(doc(tableTwo, "games", gameId, "results", "board-5-ns-1"), result({ boardNumber: 5, round: 1, table: 2, nsPairIndex: 1, ewPairIndex: 3, updatedBy: "table-two" }))
   await assertSucceeds(write.commit())
 })
 

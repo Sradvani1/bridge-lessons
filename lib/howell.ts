@@ -10,9 +10,9 @@ export type HowellAssignment = {
 
 const PAIRINGS: Record<HowellTableCount, readonly (readonly [number, number][])[]> = {
   2: [
-    [[0, 3], [1, 2]],
-    [[0, 2], [3, 1]],
     [[0, 1], [2, 3]],
+    [[0, 2], [1, 3]],
+    [[0, 3], [1, 2]],
   ],
   3: [
     [[5, 0], [2, 3], [4, 1]],
@@ -23,7 +23,7 @@ const PAIRINGS: Record<HowellTableCount, readonly (readonly [number, number][])[
   ],
 }
 
-const BOARDS_PER_ROUND: Record<HowellTableCount, number> = { 2: 2, 3: 3 }
+const BOARDS_PER_ROUND: Record<HowellTableCount, number> = { 2: 4, 3: 3 }
 
 // The 3-table schedule follows the printed Baron Barclay 6-pair movement cards.
 const BOARD_GROUPS: Record<HowellTableCount, readonly number[][]> = {
