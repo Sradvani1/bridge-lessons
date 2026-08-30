@@ -168,7 +168,12 @@ service cloud.firestore {
       function validStaleGameCancellation() {
         return staleGameData()
           && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
-          && request.resource.data.status == 'cancelled';
+          && request.resource.data.status == 'cancelled'
+          // A stale game may only be cancelled while its active lock is replaced.
+          && exists(activeGamePath())
+          && get(activeGamePath()).data.gameId == gameId
+          && existsAfter(activeGamePath())
+          && getAfter(activeGamePath()).data.gameId != gameId;
       }
       // Table claims are immutable per device. Finishing or cancelling clears the active-game lock.
       allow update: if signedIn() && (

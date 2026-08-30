@@ -115,10 +115,12 @@ test("replaces an active game after two hours without activity", async () => {
   await seedActiveGame()
   const replacement = environment.authenticatedContext("replacement-director").firestore()
   const replacementGameId = "replacement-game"
+  await assertFails(updateDoc(doc(replacement, "games", gameId), { status: "cancelled" }))
   await assertSucceeds(runTransaction(replacement, async (transaction) => {
     const active = await transaction.get(doc(replacement, "active-game", "current"))
     assert.equal(active.data()?.gameId, gameId)
-    const replacementGame = { ...game(), directorUid: "replacement-director", createdAt: Date.now(), lastActivityAt: Date.now() }
+    const now = Date.now()
+    const replacementGame = { ...game(), directorUid: "replacement-director", createdAt: now, lastActivityAt: now }
     transaction.update(doc(replacement, "games", gameId), { status: "cancelled" })
     transaction.set(doc(replacement, "games", replacementGameId), replacementGame)
     transaction.set(doc(replacement, "codes", "DEF567"), { gameId: replacementGameId })
