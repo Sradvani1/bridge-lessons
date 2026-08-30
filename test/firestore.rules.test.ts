@@ -161,7 +161,7 @@ test("rejects a game created with a future activity timestamp", async () => {
   await assertFails(batch.commit())
 })
 
-test("requires a complete game before finishing or cancelling to release the active game", async () => {
+test("requires an atomic active-game release before finishing or cancelling", async () => {
   await seed()
   await seedActiveGame()
   const director = environment.authenticatedContext("director").firestore()
@@ -170,16 +170,11 @@ test("requires a complete game before finishing or cancelling to release the act
   const finish = writeBatch(director)
   finish.update(doc(director, "games", gameId), { status: "finished" })
   finish.delete(doc(director, "active-game", "current"))
-  await assertFails(finish.commit())
-
-  const cancel = writeBatch(director)
-  cancel.update(doc(director, "games", gameId), { status: "cancelled" })
-  cancel.delete(doc(director, "active-game", "current"))
-  await assertSucceeds(cancel.commit())
+  await assertSucceeds(finish.commit())
 })
 
-test("allows the director to finish a complete Howell game", async () => {
-  await seed({ ...howellGame(2), resultCount: 24 })
+test("allows the director to finish a Howell game", async () => {
+  await seed(howellGame(2))
   await seedActiveGame()
   const director = environment.authenticatedContext("director").firestore()
   const finish = writeBatch(director)
@@ -188,10 +183,10 @@ test("allows the director to finish a complete Howell game", async () => {
   await assertSucceeds(finish.commit())
 })
 
-test("prevents unassigned devices from advancing result totals", async () => {
-  await seed()
-  const attacker = environment.authenticatedContext("attacker").firestore()
-  await assertFails(updateDoc(doc(attacker, "games", gameId), { resultCount: 1, lastActivityAt: Date.now() }))
+test("prevents table devices from changing result totals", async () => {
+  await seed({ ...game(), tables: { "1": "table-one" } })
+  const tableOne = environment.authenticatedContext("table-one").firestore()
+  await assertFails(updateDoc(doc(tableOne, "games", gameId), { resultCount: 1, lastActivityAt: Date.now() }))
 })
 
 test("allows only one device to claim each table", async () => {
@@ -234,17 +229,13 @@ test("allows a Howell table device to write its rotating North-South pair", asyn
   await assertSucceeds(write.commit())
 })
 
-test("allows a claimed table to read and create a new result transactionally", async () => {
+test("allows a claimed table to read a new result before creating it", async () => {
   await seed({ ...game(), tables: { "1": "table-one" } })
   const tableOne = environment.authenticatedContext("table-one").firestore()
   const resultRef = doc(tableOne, "games", gameId, "results", "board-1-ns-0")
-  const gameRef = doc(tableOne, "games", gameId)
-  const now = Date.now()
   await assertSucceeds(runTransaction(tableOne, async (transaction) => {
     const existing = await transaction.get(resultRef)
     assert.equal(existing.exists(), false)
-    transaction.set(resultRef, result({ updatedBy: "table-one", updatedAt: now }))
-    transaction.update(gameRef, { resultCount: 1, lastActivityAt: now })
   }))
 
   const unclaimed = environment.authenticatedContext("unclaimed").firestore()
@@ -385,4 +376,43 @@ test("rehearses three scorers through a complete Mitchell game", async () => {
     }
   }
 
+})
+
+test("rehearses scorer saves and director finish for every movement", async () => {
+  const movements = [
+    { name: "mitchell", tableCount: 3, data: game(), assignments: Array.from({ length: 3 }, (_, tableIndex) => Array.from({ length: 3 }, (_, round) => ({ table: tableIndex + 1, round, nsPairIndex: tableIndex, ewPairIndex: eastWestPairAt((tableIndex + 1) as 1 | 2 | 3, round as 0 | 1 | 2) - 1, boardNumbers: boardNumbersAt((tableIndex + 1) as 1 | 2 | 3, round as 0 | 1 | 2) }))).flat(), expectedResults: 36 },
+    ...([2, 3] as const).map((tableCount) => ({ name: `howell-${tableCount}`, tableCount, data: howellGame(tableCount), assignments: howellAssignments(tableCount), expectedResults: howellResultCount(tableCount) })),
+  ]
+
+  for (const movement of movements) {
+    await environment.clearFirestore()
+    await seed(movement.data)
+    await seedActiveGame()
+    const tables = Array.from({ length: movement.tableCount }, (_, index) => environment.authenticatedContext(`full-${movement.name}-${index + 1}`).firestore())
+    for (const [index, tableFirestore] of tables.entries()) await assertSucceeds(updateDoc(doc(tableFirestore, "games", gameId), { [`tables.${index + 1}`]: `full-${movement.name}-${index + 1}` }))
+
+    for (const assignment of movement.assignments) for (const boardNumber of assignment.boardNumbers) {
+      const scorer = tables[assignment.table - 1]
+      const resultRef = doc(scorer, "games", gameId, "results", `board-${boardNumber}-ns-${assignment.nsPairIndex}`)
+      const gameRef = doc(scorer, "games", gameId)
+      try {
+        const score = writeBatch(scorer)
+        score.set(resultRef, result({ boardNumber, round: assignment.round, table: assignment.table, nsPairIndex: assignment.nsPairIndex, ewPairIndex: assignment.ewPairIndex, kind: "contract", level: 1, strain: "NT", doubling: "none", declarer: "ns", tricks: 7, updatedBy: `full-${movement.name}-${assignment.table}`, updatedAt: Date.now() }))
+        score.update(gameRef, { lastActivityAt: Date.now() })
+        await assertSucceeds(score.commit())
+      } catch (error) {
+        throw new Error(`${movement.name}, table ${assignment.table}, round ${assignment.round + 1}, board ${boardNumber}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    const director = environment.authenticatedContext("director").firestore()
+    const finish = writeBatch(director)
+    finish.update(doc(director, "games", gameId), { status: "finished" })
+    finish.delete(doc(director, "active-game", "current"))
+    await assertSucceeds(finish.commit())
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const results = await getDocs(collection(context.firestore(), "games", gameId, "results"))
+      assert.equal(results.size, movement.expectedResults)
+    })
+  }
 })

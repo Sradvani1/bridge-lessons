@@ -138,21 +138,12 @@ service cloud.firestore {
           && request.resource.data.tables.diff(gameData().tables).changedKeys().size() == 0
           && request.resource.data.tables.diff(gameData().tables).removedKeys().hasOnly(['1', '2', '3']);
       }
-      function validResultCountUpdate() {
-        return (isDirector() || ownsTable())
-          && gameData().status == 'playing'
-          && validActivityUpdate()
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['resultCount', 'lastActivityAt'])
-          && request.resource.data.resultCount is int
-          && request.resource.data.resultCount >= 1 && request.resource.data.resultCount <= ((!('movement' in gameData().keys()) || gameData().movement != 'howell') ? 36 : gameData().tableCount == 2 ? 24 : 45)
-          && request.resource.data.resultCount == gameData().resultCount + 1;
-      }
       function validActivityUpdate() {
         return currentTimestamp(request.resource.data.lastActivityAt)
           && (!('lastActivityAt' in gameData().keys()) || request.resource.data.lastActivityAt >= gameData().lastActivityAt);
       }
       function validDirectorActivityUpdate() {
-        return isDirector()
+        return (isDirector() || ownsTable())
           && gameData().status == 'playing'
           && validActivityUpdate()
           && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['lastActivityAt']);
@@ -162,7 +153,6 @@ service cloud.firestore {
           && gameData().status == 'playing'
           && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
           && request.resource.data.status in ['finished', 'cancelled']
-          && (request.resource.data.status == 'cancelled' || gameData().resultCount == ((!('movement' in gameData().keys()) || gameData().movement != 'howell') ? 36 : gameData().tableCount == 2 ? 24 : 45))
           && !existsAfter(activeGamePath());
       }
       function validStaleGameCancellation() {
@@ -180,7 +170,6 @@ service cloud.firestore {
         validDirectorTableRelease()
         || validGameClosure()
         || validStaleGameCancellation()
-        || validResultCountUpdate()
         || validDirectorActivityUpdate()
         || validTableClaim()
       );
@@ -224,11 +213,11 @@ service cloud.firestore {
         }
         function correctHowellFormula() {
           return (live().tableCount == 2 && ((request.resource.data.table == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == request.resource.data.round + 1) || (request.resource.data.table == 2 && ((request.resource.data.round == 0 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 1 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 2 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2)))))
-            || (live().tableCount == 3 && ((request.resource.data.table == 1 && request.resource.data.nsPairIndex == 5 && request.resource.data.ewPairIndex == request.resource.data.round) || (request.resource.data.table == 2 && ((request.resource.data.round == 0 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 1 && request.resource.data.nsPairIndex == 3 && request.resource.data.ewPairIndex == 4) || (request.resource.data.round == 2 && request.resource.data.nsPairIndex == 4 && request.resource.data.ewPairIndex == 0) || (request.resource.data.round == 3 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 1) || (request.resource.data.round == 4 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2))) || (request.resource.data.table == 3 && ((request.resource.data.round == 0 && request.resource.data.nsPairIndex == 4 && request.resource.data.ewPairIndex == 1) || (request.resource.data.round == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 2) || (request.resource.data.round == 2 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 3 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 4) || (request.resource.data.round == 4 && request.resource.data.nsPairIndex == 3 && request.resource.data.ewPairIndex == 0)))));
+            || (live().tableCount == 3 && ((request.resource.data.table == 1 && request.resource.data.nsPairIndex == 5 && request.resource.data.ewPairIndex == request.resource.data.round) || (request.resource.data.table == 2 && request.resource.data.nsPairIndex == (request.resource.data.round + 2) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 3) % 5) || (request.resource.data.table == 3 && request.resource.data.nsPairIndex == (request.resource.data.round + 4) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 1) % 5)));
         }
         function correctHowellBoards() {
           return (live().tableCount == 2 && ((request.resource.data.round == 0 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12)))
-            || (live().tableCount == 3 && ((request.resource.data.table == 1 && request.resource.data.boardNumber >= request.resource.data.round * 3 + 1 && request.resource.data.boardNumber <= request.resource.data.round * 3 + 3) || (request.resource.data.table == 2 && ((request.resource.data.round == 0 || request.resource.data.round == 2) && request.resource.data.boardNumber >= 4 && request.resource.data.boardNumber <= 6) || ((request.resource.data.round == 1 || request.resource.data.round == 3) && request.resource.data.boardNumber >= 7 && request.resource.data.boardNumber <= 9) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15)) || (request.resource.data.table == 3 && ((request.resource.data.round == 0 || request.resource.data.round == 1) && request.resource.data.boardNumber >= 10 && request.resource.data.boardNumber <= 12) || ((request.resource.data.round == 2 || request.resource.data.round == 3) && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15))));
+            || (live().tableCount == 3 && ((request.resource.data.table == 1 && request.resource.data.boardNumber >= request.resource.data.round * 3 + 1 && request.resource.data.boardNumber <= request.resource.data.round * 3 + 3) || (request.resource.data.table == 2 && ((request.resource.data.round < 4 && request.resource.data.boardNumber >= 4 + (request.resource.data.round % 2) * 3 && request.resource.data.boardNumber <= 6 + (request.resource.data.round % 2) * 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15))) || (request.resource.data.table == 3 && ((request.resource.data.round < 2 && request.resource.data.boardNumber >= 10 && request.resource.data.boardNumber <= 12) || (request.resource.data.round >= 2 && request.resource.data.round < 4 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15)))));
         }
         function correctHowellPairs() {
           return (live().tableCount == 2 && ((request.resource.data.table == 1 && request.resource.data.round == 0 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 3) || (request.resource.data.table == 2 && request.resource.data.round == 0 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2) || (request.resource.data.table == 1 && request.resource.data.round == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 2) || (request.resource.data.table == 2 && request.resource.data.round == 1 && request.resource.data.nsPairIndex == 3 && request.resource.data.ewPairIndex == 1) || (request.resource.data.table == 1 && request.resource.data.round == 2 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 1) || (request.resource.data.table == 2 && request.resource.data.round == 2 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3)))

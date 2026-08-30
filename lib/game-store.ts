@@ -9,6 +9,7 @@ import {
   runTransaction,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore"
 import { getDb, requireUserId } from "./firebase"
 import {
@@ -197,18 +198,10 @@ export async function saveResult(gameId: string, input: ResultInput): Promise<vo
   const gameRef = doc(db, "games", gameId)
 
   try {
-    await runTransaction(db, async (transaction) => {
-      const [existing, game] = await Promise.all([transaction.get(resultRef), transaction.get(gameRef)])
-      if (existing.exists()) {
-        transaction.update(resultRef, payload)
-        transaction.update(gameRef, { lastActivityAt: Date.now() })
-      }
-      else {
-        const resultCount = game.data()?.resultCount
-        transaction.set(resultRef, payload)
-        transaction.update(gameRef, { resultCount: typeof resultCount === "number" ? resultCount + 1 : 1, lastActivityAt: Date.now() })
-      }
-    })
+    const batch = writeBatch(db)
+    batch.set(resultRef, payload)
+    batch.update(gameRef, { lastActivityAt: Date.now() })
+    await batch.commit()
   } catch (error) {
     throw new GameStoreError("Could not save this result.", { cause: error })
   }
