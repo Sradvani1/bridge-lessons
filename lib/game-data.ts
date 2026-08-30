@@ -1,5 +1,5 @@
 import { calculateDuplicateScore, type DeclarerSide, type Doubling, type Strain } from "./bridge-scoring"
-import { howellPairCount, isHowellAssignment, isHowellTableCount, type HowellTableCount } from "./howell"
+import { howellBoardCount, howellPairCount, isHowellAssignment, isHowellTableCount, type HowellTableCount } from "./howell"
 import { boardNumbersAt, boardVulnerability, eastWestPairAt, isRoundIndex, isTableNumber, type GameStatus } from "./mitchell"
 
 export type ResultKind = "contract" | "passed-out" | "manual"
@@ -72,7 +72,7 @@ export function parseStoredResult(raw: unknown, game?: StoredGame): StoredResult
   if (!isRecord(raw)) return null
 
   const tableCount = game?.movement === "howell" ? game.tableCount : 3
-  const boardNumber = intIn(raw, "boardNumber", 1, game?.movement === "howell" ? tableCount === 2 ? 6 : 10 : 12)
+  const boardNumber = intIn(raw, "boardNumber", 1, game?.movement === "howell" ? howellBoardCount(tableCount) : 12)
   const round = intIn(raw, "round", 0, game?.movement === "howell" ? tableCount === 2 ? 2 : 4 : 2)
   const table = intIn(raw, "table", 1, tableCount)
   const nsPairIndex = intIn(raw, "nsPairIndex", 0, tableCount * 2 - 1)

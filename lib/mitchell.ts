@@ -18,16 +18,16 @@ const DEALER_CYCLE = ["North", "East", "South", "West"] as const
 
 export type Dealer = (typeof DEALER_CYCLE)[number]
 
-function isBoardNumber(boardNumber: number): boolean {
-  return Number.isInteger(boardNumber) && boardNumber >= 1 && boardNumber <= BOARD_COUNT
+function isScoringBoardNumber(boardNumber: number): boolean {
+  return Number.isInteger(boardNumber) && boardNumber >= 1 && boardNumber <= VULNERABILITY_CYCLE.length
 }
 
 export function boardVulnerability(boardNumber: number): BoardVulnerability | null {
-  return isBoardNumber(boardNumber) ? VULNERABILITY_CYCLE[(boardNumber - 1) % VULNERABILITY_CYCLE.length] : null
+  return isScoringBoardNumber(boardNumber) ? VULNERABILITY_CYCLE[(boardNumber - 1) % VULNERABILITY_CYCLE.length] : null
 }
 
 export function boardDealer(boardNumber: number): Dealer | null {
-  return isBoardNumber(boardNumber) ? DEALER_CYCLE[(boardNumber - 1) % DEALER_CYCLE.length] : null
+  return isScoringBoardNumber(boardNumber) ? DEALER_CYCLE[(boardNumber - 1) % DEALER_CYCLE.length] : null
 }
 
 export type TableNumber = 1 | 2 | 3

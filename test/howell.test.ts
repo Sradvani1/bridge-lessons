@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { parseStoredGame, parseStoredResult, type StoredResult } from "../lib/game-data"
+import { deriveNsScore, parseStoredGame, parseStoredResult, type StoredResult } from "../lib/game-data"
 import { howellAssignments, howellBoardCount, howellPairCount, howellResultCount } from "../lib/howell"
 import { computeHowellStandings } from "../lib/standings"
 
@@ -64,6 +64,18 @@ test("parses only results that match a Howell movement card", () => {
   assert.ok(game && game.movement === "howell")
   assert.ok(parseStoredResult({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 0, ewPairIndex: 1, kind: "passed-out", updatedBy: "table-one", updatedAt: 1 }, game))
   assert.equal(parseStoredResult({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 0, ewPairIndex: 2, kind: "passed-out", updatedBy: "table-one", updatedAt: 1 }, game), null)
+})
+
+test("parses and scores every board on both Howell movement cards", () => {
+  for (const tableCount of [2, 3] as const) {
+    const game = parseStoredGame({ status: "playing", movement: "howell", tableCount, pairs: Array.from({ length: tableCount * 2 }, (_, index) => `Pair ${index + 1}`), directorUid: "director", tables: {} })
+    assert.ok(game && game.movement === "howell")
+    for (const assignment of howellAssignments(tableCount)) for (const boardNumber of assignment.boardNumbers) {
+      const result = parseStoredResult({ boardNumber, round: assignment.round, table: assignment.table, nsPairIndex: assignment.nsPairIndex, ewPairIndex: assignment.ewPairIndex, kind: "contract", level: 1, strain: "NT", doubling: "none", declarer: "ns", tricks: 7, updatedBy: "table", updatedAt: 1 }, game)
+      assert.ok(result)
+      assert.notEqual(deriveNsScore(result), null)
+    }
+  }
 })
 
 test("combines Howell scores when pairs change direction", () => {

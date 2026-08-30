@@ -117,9 +117,17 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const claimedTable = game && userId
     ? Array.from({ length: game.movement === "howell" ? game.tableCount : 3 }, (_, index) => index + 1).find((number) => game.tables[String(number)] === userId) ?? null
     : null
+  const scorerRound = !director && game && claimedTable
+    ? Array.from({ length: game.movement === "howell" ? howellRoundCount(game.tableCount) : 3 }, (_, candidateRound) => {
+      const assignment = game.movement === "howell" ? howellAssignmentAt(game.tableCount, claimedTable, candidateRound) : null
+      const nsPairIndex = assignment?.nsPairIndex ?? claimedTable - 1
+      const boards = assignment?.boardNumbers ?? boardNumbersAt(claimedTable as 1 | 2 | 3, candidateRound as RoundIndex)
+      return boards.every((board) => results.some((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex)) ? null : candidateRound
+    }).find((candidateRound) => candidateRound !== null) ?? round
+    : round
   const table = director ? selectedTable : claimedTable
-  const howellAssignment = game?.movement === "howell" && table ? howellAssignmentAt(game.tableCount, table, round) : null
-  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, round as RoundIndex) : null
+  const howellAssignment = game?.movement === "howell" && table ? howellAssignmentAt(game.tableCount, table, scorerRound) : null
+  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, scorerRound as RoundIndex) : null
   const resultsTable = director ? selectedTable : claimedTable
 
   useEffect(() => {
@@ -254,7 +262,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{tableNumbers.map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" disabled={releasingTable !== null} onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{releasingTable === number ? "Releasing..." : "Release"}</button> : null}</div>)}</div>
     </section> : null}
 
-    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={round} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
+    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={scorerRound} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
 
     <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Standings</h2>
@@ -273,7 +281,7 @@ function StandingsTable({ title, rows, tableCount }: { title: string; rows: Stan
 
 function HowellMovementCard({ pairs, tableCount }: { pairs: readonly string[]; tableCount: 2 | 3 }) {
   const assignments = howellAssignments(tableCount)
-  return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1} · Boards {assignments.find((assignment) => assignment.round === round)?.boardNumbers.join("-")}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
+  return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: Boards {assignment.boardNumbers.join("-")} · {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
 }
 
 function Traveller({ results }: { results: StoredResult[] }) {
@@ -286,8 +294,8 @@ function Traveller({ results }: { results: StoredResult[] }) {
   }
   return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><h2 className="text-2xl font-bold text-[#123a28]">Board Travellers</h2><div className="mt-4 grid gap-4 lg:grid-cols-2">
     {[...byBoard.entries()].sort(([left], [right]) => left - right).map(([board, rows]) => {
-      const ranked = new Map(rankBoardResults(rows.map((result) => ({ id: String(result.table), label: "", nsScore: deriveNsScore(result) ?? 0 }))).map((row) => [Number(row.id), row.matchpoints]))
-      return <article key={board} className="rounded-xl bg-[#f3f7f3] p-4"><h3 className="font-bold text-[#173c2a]">Board {board}</h3><div className="mt-2 space-y-1 text-[#52615a]">{rows.sort((left, right) => left.table - right.table).map((result) => <p key={result.table}>Table {result.table}: NS {deriveNsScore(result)} · {ranked.get(result.table) ?? 0} MP</p>)}</div></article>
+      const ranked = new Map(rankBoardResults(rows.map((result) => ({ id: `${result.table}-${result.nsPairIndex}`, label: "", nsScore: deriveNsScore(result) ?? 0 }))).map((row) => [row.id, row.matchpoints]))
+      return <article key={board} className="rounded-xl bg-[#f3f7f3] p-4"><h3 className="font-bold text-[#173c2a]">Board {board}</h3><div className="mt-2 space-y-1 text-[#52615a]">{rows.sort((left, right) => left.table - right.table).map((result) => <p key={`${result.table}-${result.nsPairIndex}`}>Table {result.table}: NS {deriveNsScore(result)} · {ranked.get(`${result.table}-${result.nsPairIndex}`) ?? 0} MP</p>)}</div></article>
     })}
   </div></section>
 }
