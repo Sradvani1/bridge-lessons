@@ -105,11 +105,13 @@ export function computeHowellStandings(results: readonly StoredResult[], pairs: 
   const totals = Array.from({ length: pairs.length }, () => 0)
   const played = Array.from({ length: pairs.length }, () => 0)
   for (const boardResults of byBoard.values()) {
-    const matchpointsByTable = new Map(rankBoardResults(boardResults.map((entry) => ({ id: String(entry.table), label: "", nsScore: deriveNsScore(entry) ?? 0 }))).map((entry) => [Number(entry.id), entry.matchpoints]))
+    // A Howell board can return to the same table in a later round, so table
+    // number alone is not a unique result identity.
+    const matchpointsByResult = new Map(rankBoardResults(boardResults.map((entry) => ({ id: `${entry.table}-${entry.nsPairIndex}`, label: "", nsScore: deriveNsScore(entry) ?? 0 }))).map((entry) => [entry.id, entry.matchpoints]))
     for (const result of boardResults) {
       const score = deriveNsScore(result)
       if (score === null) continue
-      const matchpoints = matchpointsByTable.get(result.table) ?? 0
+      const matchpoints = matchpointsByResult.get(`${result.table}-${result.nsPairIndex}`) ?? 0
       totals[result.nsPairIndex] += matchpoints
       totals[result.ewPairIndex] += (boardResults.length - 1) * 2 - matchpoints
       played[result.nsPairIndex] += 1

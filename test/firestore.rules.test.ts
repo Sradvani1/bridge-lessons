@@ -222,8 +222,8 @@ test("enforces configured Howell table claims and table-scoped live results", as
 test("accepts only scheduled Howell results", async () => {
   await seed(howellGame(3))
   const director = environment.authenticatedContext("director").firestore()
-  await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ ewPairIndex: 5, updatedBy: "director" })))
-  await assertFails(setDoc(doc(director, "games", gameId, "results", "board-1-ns-0"), result({ ewPairIndex: 4, updatedBy: "director" })))
+  await assertSucceeds(setDoc(doc(director, "games", gameId, "results", "board-1-ns-5"), result({ nsPairIndex: 5, ewPairIndex: 0, updatedBy: "director" })))
+  await assertFails(setDoc(doc(director, "games", gameId, "results", "board-1-ns-5"), result({ nsPairIndex: 5, ewPairIndex: 4, updatedBy: "director" })))
 })
 
 test("allows a Howell table device to write its rotating North-South pair", async () => {
