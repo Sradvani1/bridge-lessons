@@ -71,24 +71,27 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     return localStorage.getItem(`bridge-code-${gameId}`) ?? ""
   })
 
-  useEffect(() => subscribeGame(gameId, (next, hasPendingWrites) => {
-    setGame(next)
-    setGameLoaded(true)
-    setGameConnectionError("")
-    setGameHasPendingWrites(hasPendingWrites)
-    const nextClaimedTable = next && userIdRef.current
-      ? Array.from({ length: next.movement === "howell" ? next.tableCount : 3 }, (_, index) => index + 1).find((number) => next.tables[String(number)] === userIdRef.current) ?? null
-      : null
-    if (nextClaimedTable) {
-      setClaimingTable(null)
-    } else if (claimedTableRef.current) {
-      setMessage(`This device was released from Table ${claimedTableRef.current}. Ask the director to assign a table.`)
-    }
-    claimedTableRef.current = nextClaimedTable
-  }, (next) => {
-    setGameLoaded(true)
-    setGameConnectionError(next.message)
-  }), [gameId, retryKey])
+  useEffect(() => {
+    if (!identityReady) return
+    return subscribeGame(gameId, (next, hasPendingWrites) => {
+      setGame(next)
+      setGameLoaded(true)
+      setGameConnectionError("")
+      setGameHasPendingWrites(hasPendingWrites)
+      const nextClaimedTable = next && userIdRef.current
+        ? Array.from({ length: next.movement === "howell" ? next.tableCount : 3 }, (_, index) => index + 1).find((number) => next.tables[String(number)] === userIdRef.current) ?? null
+        : null
+      if (nextClaimedTable) {
+        setClaimingTable(null)
+      } else if (claimedTableRef.current) {
+        setMessage(`This device was released from Table ${claimedTableRef.current}. Ask the director to assign a table.`)
+      }
+      claimedTableRef.current = nextClaimedTable
+    }, (next) => {
+      setGameLoaded(true)
+      setGameConnectionError(next.message)
+    })
+  }, [gameId, identityReady, retryKey])
 
   const directorUid = game?.directorUid
   useEffect(() => {
