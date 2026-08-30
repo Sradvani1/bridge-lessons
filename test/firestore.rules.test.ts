@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, afterEach, before, test } from "node:test"
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing"
-import { collection, deleteField, doc, getDoc, getDocs, query, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
+import { collection, deleteField, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
 import { boardNumbersAt, eastWestPairAt } from "../lib/mitchell"
 import { howellAssignments, howellResultCount } from "../lib/howell"
 
@@ -114,21 +114,49 @@ test("replaces an active game after two hours without activity", async () => {
   await seed(staleGame)
   await seedActiveGame()
   const replacement = environment.authenticatedContext("replacement-director").firestore()
-  const batch = writeBatch(replacement)
   const replacementGameId = "replacement-game"
-  batch.set(doc(replacement, "games", replacementGameId), { ...game(), directorUid: "replacement-director", createdAt: Date.now(), lastActivityAt: Date.now() })
-  batch.set(doc(replacement, "codes", "DEF567"), { gameId: replacementGameId })
-  batch.set(doc(replacement, "active-game", "current"), { gameId: replacementGameId, directorUid: "replacement-director" })
-  await assertSucceeds(batch.commit())
+  await assertSucceeds(runTransaction(replacement, async (transaction) => {
+    const active = await transaction.get(doc(replacement, "active-game", "current"))
+    assert.equal(active.data()?.gameId, gameId)
+    const replacementGame = { ...game(), directorUid: "replacement-director", createdAt: Date.now(), lastActivityAt: Date.now() }
+    transaction.update(doc(replacement, "games", gameId), { status: "cancelled" })
+    transaction.set(doc(replacement, "games", replacementGameId), replacementGame)
+    transaction.set(doc(replacement, "codes", "DEF567"), { gameId: replacementGameId })
+    transaction.set(doc(replacement, "active-game", "current"), { gameId: replacementGameId, directorUid: "replacement-director" })
+  }))
+  const oldTable = environment.authenticatedContext("old-table").firestore()
+  await assertFails(updateDoc(doc(oldTable, "games", gameId), { "tables.1": "old-table", lastActivityAt: Date.now() }))
 })
 
-test("keeps the active game reference private to its director", async () => {
+test("allows signed-in facilitators to read the active game reference", async () => {
   await seed()
   await seedActiveGame()
   const director = environment.authenticatedContext("director").firestore()
   const visitor = environment.authenticatedContext("visitor").firestore()
   await assertSucceeds(getDoc(doc(director, "active-game", "current")))
-  await assertFails(getDoc(doc(visitor, "active-game", "current")))
+  await assertSucceeds(getDoc(doc(visitor, "active-game", "current")))
+})
+
+test("initializes legacy activity and rejects future timestamps", async () => {
+  const legacy: Record<string, unknown> = game()
+  delete legacy.lastActivityAt
+  await seed(legacy)
+  const tableOne = environment.authenticatedContext("table-one").firestore()
+  await assertSucceeds(updateDoc(doc(tableOne, "games", gameId), { "tables.1": "table-one", lastActivityAt: Date.now() }))
+
+  const future = Date.now() + (10 * 60 * 1000)
+  const tableTwo = environment.authenticatedContext("table-two").firestore()
+  await assertFails(updateDoc(doc(tableTwo, "games", gameId), { "tables.2": "table-two", lastActivityAt: future }))
+})
+
+test("rejects a game created with a future activity timestamp", async () => {
+  const director = environment.authenticatedContext("director").firestore()
+  const batch = writeBatch(director)
+  const futureGame = { ...game(), lastActivityAt: Date.now() + (10 * 60 * 1000) }
+  batch.set(doc(director, "games", "future-game"), futureGame)
+  batch.set(doc(director, "codes", "ABC234"), { gameId: "future-game" })
+  batch.set(doc(director, "active-game", "current"), { gameId: "future-game", directorUid: "director" })
+  await assertFails(batch.commit())
 })
 
 test("requires a complete game before finishing or cancelling to release the active game", async () => {
@@ -156,6 +184,12 @@ test("allows the director to finish a complete Howell game", async () => {
   finish.update(doc(director, "games", gameId), { status: "finished" })
   finish.delete(doc(director, "active-game", "current"))
   await assertSucceeds(finish.commit())
+})
+
+test("prevents unassigned devices from advancing result totals", async () => {
+  await seed()
+  const attacker = environment.authenticatedContext("attacker").firestore()
+  await assertFails(updateDoc(doc(attacker, "games", gameId), { resultCount: 1, lastActivityAt: Date.now() }))
 })
 
 test("allows only one device to claim each table", async () => {

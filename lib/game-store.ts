@@ -54,10 +54,13 @@ export async function createGame(game: NewGame): Promise<{ gameId: string; code:
         const [codeSnapshot, activeGameSnapshot] = await Promise.all([transaction.get(codeRef), transaction.get(activeGameRef)])
         if (codeSnapshot.exists()) throw new GameStoreError("Game code collision.")
         if (activeGameSnapshot.exists()) {
-          const existingGame = await transaction.get(doc(db, "games", activeGameSnapshot.data().gameId))
+          const existingGameRef = doc(db, "games", activeGameSnapshot.data().gameId)
+          const existingGame = await transaction.get(existingGameRef)
           const existingData = existingGame.data()
-          const inactive = existingData?.status !== "playing" || (typeof existingData?.lastActivityAt === "number" && Date.now() - existingData.lastActivityAt >= ACTIVE_GAME_TIMEOUT_MS)
+          const lastActivityAt = typeof existingData?.lastActivityAt === "number" ? existingData.lastActivityAt : existingData?.createdAt
+          const inactive = existingData?.status !== "playing" || (typeof lastActivityAt === "number" && Date.now() - lastActivityAt >= ACTIVE_GAME_TIMEOUT_MS)
           if (!inactive) throw new GameStoreError("A duplicate game is already in progress. Join it with the director's code.")
+          if (existingData?.status === "playing") transaction.update(existingGameRef, { status: "cancelled" })
         }
         const now = Date.now()
         transaction.set(doc(db, "games", gameId), {

@@ -14,8 +14,9 @@ service cloud.firestore {
     match /active-game/current {
       function staleGame() {
         let game = get(/databases/$(database)/documents/games/$(resource.data.gameId)).data;
+        let lastActivity = ('lastActivityAt' in game.keys()) ? game.lastActivityAt : game.createdAt;
         return game.status != 'playing'
-          || (('lastActivityAt' in game.keys()) && game.lastActivityAt <= request.time.toMillis() - 7200000);
+          || lastActivity <= request.time.toMillis() - 7200000;
       }
       function validNewActiveGame() {
         return request.resource.data.keys().hasAll(['gameId', 'directorUid'])
@@ -25,7 +26,8 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.directorUid == request.auth.uid
           && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.status == 'playing';
       }
-      allow get: if signedIn() && resource.data.directorUid == request.auth.uid;
+      // Clients need this small lock record to replace an expired game transactionally.
+      allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn() && validNewActiveGame();
       allow update: if signedIn() && staleGame() && validNewActiveGame();
@@ -50,8 +52,22 @@ service cloud.firestore {
       function gameData() {
         return resource.data;
       }
+      function currentTimestamp(value) {
+        return value is int
+          && value >= request.time.toMillis() - 300000
+          && value <= request.time.toMillis() + 300000;
+      }
+      function staleGameData() {
+        let lastActivity = ('lastActivityAt' in gameData().keys()) ? gameData().lastActivityAt : gameData().createdAt;
+        return gameData().status == 'playing' && lastActivity <= request.time.toMillis() - 7200000;
+      }
       function isDirector() {
         return signedIn() && request.auth.uid == gameData().directorUid;
+      }
+      function ownsTable() {
+        return signedIn() && ((('1' in gameData().tables.keys()) && gameData().tables['1'] == request.auth.uid)
+          || (('2' in gameData().tables.keys()) && gameData().tables['2'] == request.auth.uid)
+          || (('3' in gameData().tables.keys()) && gameData().tables['3'] == request.auth.uid));
       }
 
       allow get: if signedIn();
@@ -88,7 +104,7 @@ service cloud.firestore {
         && request.resource.data.tables.keys().size() == 0
         && request.resource.data.resultCount == 0
         && request.resource.data.createdAt is int
-        && request.resource.data.lastActivityAt is int
+        && currentTimestamp(request.resource.data.lastActivityAt)
         && request.resource.data.lastActivityAt == request.resource.data.createdAt
         && getAfter(activeGamePath()).data.gameId == gameId
         && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
@@ -123,7 +139,8 @@ service cloud.firestore {
           && request.resource.data.tables.diff(gameData().tables).removedKeys().hasOnly(['1', '2', '3']);
       }
       function validResultCountUpdate() {
-        return gameData().status == 'playing'
+        return (isDirector() || ownsTable())
+          && gameData().status == 'playing'
           && validActivityUpdate()
           && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['resultCount', 'lastActivityAt'])
           && request.resource.data.resultCount is int
@@ -131,8 +148,8 @@ service cloud.firestore {
           && request.resource.data.resultCount == gameData().resultCount + 1;
       }
       function validActivityUpdate() {
-        return request.resource.data.lastActivityAt is int
-          && request.resource.data.lastActivityAt >= gameData().lastActivityAt;
+        return currentTimestamp(request.resource.data.lastActivityAt)
+          && (!('lastActivityAt' in gameData().keys()) || request.resource.data.lastActivityAt >= gameData().lastActivityAt);
       }
       function validDirectorActivityUpdate() {
         return isDirector()
@@ -148,10 +165,16 @@ service cloud.firestore {
           && (request.resource.data.status == 'cancelled' || gameData().resultCount == ((!('movement' in gameData().keys()) || gameData().movement != 'howell') ? 36 : gameData().tableCount == 2 ? 12 : 30))
           && !existsAfter(activeGamePath());
       }
+      function validStaleGameCancellation() {
+        return staleGameData()
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'cancelled';
+      }
       // Table claims are immutable per device. Finishing or cancelling clears the active-game lock.
       allow update: if signedIn() && (
         validDirectorTableRelease()
         || validGameClosure()
+        || validStaleGameCancellation()
         || validResultCountUpdate()
         || validDirectorActivityUpdate()
         || validTableClaim()
