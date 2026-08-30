@@ -30,6 +30,7 @@ type GameBase = {
   status: GameStatus
   directorUid: string
   tables: Record<string, string>
+  lastActivityAt?: number
 }
 
 export type MitchellGame = GameBase & { movement?: "mitchell"; pairs: MitchellPairs }
@@ -133,6 +134,8 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
   if (status !== "playing" && status !== "finished" && status !== "cancelled") return null
   const directorUid = uid(raw.directorUid)
   if (!directorUid) return null
+  const lastActivityAt = raw.lastActivityAt === undefined ? undefined : intIn(raw, "lastActivityAt", 0, Number.MAX_SAFE_INTEGER)
+  if (lastActivityAt === null) return null
   const movement = raw.movement
   if (movement === "howell") {
     const tableCount = raw.tableCount
@@ -144,7 +147,7 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
       pairs.push(parsedLabel)
     }
     const tables = parseTables(raw.tables, tableCount)
-    return tables ? { status, pairs, directorUid, tables, movement, tableCount } : null
+    return tables ? { status, pairs, directorUid, tables, movement, tableCount, ...(lastActivityAt === undefined ? {} : { lastActivityAt }) } : null
   }
 
   if (movement !== undefined && movement !== "mitchell") return null
@@ -161,7 +164,7 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
   }
 
   const tables = parseTables(raw.tables, 3)
-  return tables ? { status, pairs, directorUid, tables, ...(movement === "mitchell" ? { movement } : {}) } : null
+  return tables ? { status, pairs, directorUid, tables, ...(movement === "mitchell" ? { movement } : {}), ...(lastActivityAt === undefined ? {} : { lastActivityAt }) } : null
 }
 
 function parseTables(raw: unknown, tableCount: number): Record<string, string> | null {

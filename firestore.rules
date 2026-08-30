@@ -12,16 +12,23 @@ service cloud.firestore {
     }
 
     match /active-game/current {
+      function staleGame() {
+        let game = get(/databases/$(database)/documents/games/$(resource.data.gameId)).data;
+        return game.status != 'playing'
+          || (('lastActivityAt' in game.keys()) && game.lastActivityAt <= request.time.toMillis() - 7200000);
+      }
+      function validNewActiveGame() {
+        return request.resource.data.keys().hasAll(['gameId', 'directorUid'])
+          && request.resource.data.keys().hasOnly(['gameId', 'directorUid'])
+          && request.resource.data.gameId is string
+          && request.resource.data.directorUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.directorUid == request.auth.uid
+          && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.status == 'playing';
+      }
       allow get: if signedIn() && resource.data.directorUid == request.auth.uid;
       allow list: if false;
-      allow create: if signedIn()
-        && request.resource.data.keys().hasAll(['gameId', 'directorUid'])
-        && request.resource.data.keys().hasOnly(['gameId', 'directorUid'])
-        && request.resource.data.gameId is string
-        && request.resource.data.directorUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.directorUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.status == 'playing';
-      allow update: if false;
+      allow create: if signedIn() && validNewActiveGame();
+      allow update: if signedIn() && staleGame() && validNewActiveGame();
       allow delete: if signedIn()
         && resource.data.directorUid == request.auth.uid
         && getAfter(/databases/$(database)/documents/games/$(resource.data.gameId)).data.status in ['finished', 'cancelled'];
@@ -50,7 +57,7 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['status', 'movement', 'tableCount', 'pairs', 'directorUid', 'tables', 'resultCount', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['status', 'movement', 'tableCount', 'pairs', 'directorUid', 'tables', 'resultCount', 'createdAt', 'lastActivityAt'])
         && request.resource.data.status == 'playing'
         && request.resource.data.directorUid == request.auth.uid
         && request.resource.data.directorUid is string && request.resource.data.directorUid.size() <= 64
@@ -81,11 +88,14 @@ service cloud.firestore {
         && request.resource.data.tables.keys().size() == 0
         && request.resource.data.resultCount == 0
         && request.resource.data.createdAt is int
+        && request.resource.data.lastActivityAt is int
+        && request.resource.data.lastActivityAt == request.resource.data.createdAt
         && getAfter(activeGamePath()).data.gameId == gameId
         && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
       function validTableClaim() {
         return gameData().status == 'playing'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tables'])
+          && validActivityUpdate()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tables', 'lastActivityAt'])
           && ((!('movement' in gameData().keys()) || gameData().movement != 'howell') && request.resource.data.tables.keys().hasOnly(['1', '2', '3'])
             || (gameData().movement == 'howell' && gameData().tableCount == 2 && request.resource.data.tables.keys().hasOnly(['1', '2']))
             || (gameData().movement == 'howell' && gameData().tableCount == 3 && request.resource.data.tables.keys().hasOnly(['1', '2', '3'])))
@@ -106,17 +116,29 @@ service cloud.firestore {
       function validDirectorTableRelease() {
         return isDirector()
           && gameData().status == 'playing'
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['tables'])
+          && validActivityUpdate()
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['tables', 'lastActivityAt'])
           && request.resource.data.tables.diff(gameData().tables).addedKeys().size() == 0
           && request.resource.data.tables.diff(gameData().tables).changedKeys().size() == 0
           && request.resource.data.tables.diff(gameData().tables).removedKeys().hasOnly(['1', '2', '3']);
       }
       function validResultCountUpdate() {
         return gameData().status == 'playing'
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['resultCount'])
+          && validActivityUpdate()
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['resultCount', 'lastActivityAt'])
           && request.resource.data.resultCount is int
           && request.resource.data.resultCount >= 1 && request.resource.data.resultCount <= ((!('movement' in gameData().keys()) || gameData().movement != 'howell') ? 36 : gameData().tableCount == 2 ? 12 : 30)
           && request.resource.data.resultCount == gameData().resultCount + 1;
+      }
+      function validActivityUpdate() {
+        return request.resource.data.lastActivityAt is int
+          && request.resource.data.lastActivityAt >= gameData().lastActivityAt;
+      }
+      function validDirectorActivityUpdate() {
+        return isDirector()
+          && gameData().status == 'playing'
+          && validActivityUpdate()
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['lastActivityAt']);
       }
       function validGameClosure() {
         return isDirector()
@@ -131,6 +153,7 @@ service cloud.firestore {
         validDirectorTableRelease()
         || validGameClosure()
         || validResultCountUpdate()
+        || validDirectorActivityUpdate()
         || validTableClaim()
       );
       allow delete: if false;

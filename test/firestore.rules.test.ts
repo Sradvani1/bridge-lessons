@@ -10,17 +10,20 @@ const gameId = "game-1"
 let environment: RulesTestEnvironment
 
 function game(status: "playing" | "finished" = "playing") {
+  const createdAt = Date.now()
   return {
     status,
     pairs: { ns: ["NS 1", "NS 2", "NS 3"], ew: ["EW 1", "EW 2", "EW 3"] },
     directorUid: "director",
     tables: {},
     resultCount: 0,
-    createdAt: 1,
+    createdAt,
+    lastActivityAt: createdAt,
   }
 }
 
 function howellGame(tableCount: 2 | 3) {
+  const createdAt = Date.now()
   return {
     status: "playing" as const,
     movement: "howell",
@@ -29,7 +32,8 @@ function howellGame(tableCount: 2 | 3) {
     directorUid: "director",
     tables: {},
     resultCount: 0,
-    createdAt: 1,
+    createdAt,
+    lastActivityAt: createdAt,
   }
 }
 
@@ -103,6 +107,19 @@ test("rejects a second concurrent game", async () => {
   second.set(doc(director, "codes", "DEF567"), { gameId: "game-two" })
   second.set(doc(director, "active-game", "current"), { gameId: "game-two", directorUid: "director" })
   await assertFails(second.commit())
+})
+
+test("replaces an active game after two hours without activity", async () => {
+  const staleGame = { ...game(), lastActivityAt: Date.now() - (2 * 60 * 60 * 1000) - 1 }
+  await seed(staleGame)
+  await seedActiveGame()
+  const replacement = environment.authenticatedContext("replacement-director").firestore()
+  const batch = writeBatch(replacement)
+  const replacementGameId = "replacement-game"
+  batch.set(doc(replacement, "games", replacementGameId), { ...game(), directorUid: "replacement-director", createdAt: Date.now(), lastActivityAt: Date.now() })
+  batch.set(doc(replacement, "codes", "DEF567"), { gameId: replacementGameId })
+  batch.set(doc(replacement, "active-game", "current"), { gameId: replacementGameId, directorUid: "replacement-director" })
+  await assertSucceeds(batch.commit())
 })
 
 test("keeps the active game reference private to its director", async () => {

@@ -22,6 +22,7 @@ import { howellResultCount, type HowellTableCount } from "./howell"
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 const CODE_LENGTH = 6
+const ACTIVE_GAME_TIMEOUT_MS = 2 * 60 * 60 * 1000
 
 export class GameStoreError extends Error {}
 
@@ -52,14 +53,21 @@ export async function createGame(game: NewGame): Promise<{ gameId: string; code:
         const activeGameRef = doc(db, ...ACTIVE_GAME_PATH)
         const [codeSnapshot, activeGameSnapshot] = await Promise.all([transaction.get(codeRef), transaction.get(activeGameRef)])
         if (codeSnapshot.exists()) throw new GameStoreError("Game code collision.")
-        if (activeGameSnapshot.exists()) throw new GameStoreError("A duplicate game is already in progress. Join it with the director's code.")
+        if (activeGameSnapshot.exists()) {
+          const existingGame = await transaction.get(doc(db, "games", activeGameSnapshot.data().gameId))
+          const existingData = existingGame.data()
+          const inactive = existingData?.status !== "playing" || (typeof existingData?.lastActivityAt === "number" && Date.now() - existingData.lastActivityAt >= ACTIVE_GAME_TIMEOUT_MS)
+          if (!inactive) throw new GameStoreError("A duplicate game is already in progress. Join it with the director's code.")
+        }
+        const now = Date.now()
         transaction.set(doc(db, "games", gameId), {
           status: "playing",
           ...game,
           directorUid,
           tables: {},
           resultCount: 0,
-          createdAt: Date.now(),
+          createdAt: now,
+          lastActivityAt: now,
         })
         transaction.set(codeRef, { gameId })
         transaction.set(activeGameRef, { gameId, directorUid })
@@ -89,7 +97,7 @@ export async function claimTable(gameId: string, table: number): Promise<void> {
   const db = await getDb()
   const uid = await requireUserId()
   try {
-    await updateDoc(doc(db, "games", gameId), { [`tables.${table}`]: uid })
+    await updateDoc(doc(db, "games", gameId), { [`tables.${table}`]: uid, lastActivityAt: Date.now() })
   } catch (error) {
     throw new GameStoreError("Could not claim this table.", { cause: error })
   }
@@ -98,7 +106,7 @@ export async function claimTable(gameId: string, table: number): Promise<void> {
 export async function releaseTable(gameId: string, table: number): Promise<void> {
   const db = await getDb()
   try {
-    await updateDoc(doc(db, "games", gameId), { [`tables.${table}`]: deleteField() })
+    await updateDoc(doc(db, "games", gameId), { [`tables.${table}`]: deleteField(), lastActivityAt: Date.now() })
   } catch (error) {
     throw new GameStoreError("Could not release this table.", { cause: error })
   }
@@ -188,11 +196,14 @@ export async function saveResult(gameId: string, input: ResultInput): Promise<vo
   try {
     await runTransaction(db, async (transaction) => {
       const [existing, game] = await Promise.all([transaction.get(resultRef), transaction.get(gameRef)])
-      if (existing.exists()) transaction.update(resultRef, payload)
+      if (existing.exists()) {
+        transaction.update(resultRef, payload)
+        transaction.update(gameRef, { lastActivityAt: Date.now() })
+      }
       else {
         const resultCount = game.data()?.resultCount
         transaction.set(resultRef, payload)
-        transaction.update(gameRef, { resultCount: typeof resultCount === "number" ? resultCount + 1 : 1 })
+        transaction.update(gameRef, { resultCount: typeof resultCount === "number" ? resultCount + 1 : 1, lastActivityAt: Date.now() })
       }
     })
   } catch (error) {
