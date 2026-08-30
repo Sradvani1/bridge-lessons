@@ -234,6 +234,25 @@ test("allows a Howell table device to write its rotating North-South pair", asyn
   await assertSucceeds(write.commit())
 })
 
+test("allows a claimed table to read and create a new result transactionally", async () => {
+  await seed({ ...game(), tables: { "1": "table-one" } })
+  const tableOne = environment.authenticatedContext("table-one").firestore()
+  const resultRef = doc(tableOne, "games", gameId, "results", "board-1-ns-0")
+  const gameRef = doc(tableOne, "games", gameId)
+  const now = Date.now()
+  await assertSucceeds(runTransaction(tableOne, async (transaction) => {
+    const existing = await transaction.get(resultRef)
+    assert.equal(existing.exists(), false)
+    transaction.set(resultRef, result({ updatedBy: "table-one", updatedAt: now }))
+    transaction.update(gameRef, { resultCount: 1, lastActivityAt: now })
+  }))
+
+  const unclaimed = environment.authenticatedContext("unclaimed").firestore()
+  await assertFails(runTransaction(unclaimed, async (transaction) => {
+    await transaction.get(doc(unclaimed, "games", gameId, "results", "board-5-ns-0"))
+  }))
+})
+
 test("rehearses every scorer through complete two- and three-table Howell games", async () => {
   for (const tableCount of [2, 3] as const) {
     await environment.clearFirestore()

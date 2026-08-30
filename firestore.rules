@@ -201,9 +201,13 @@ service cloud.firestore {
           return 'movement' in live().keys() && live().movement == 'howell';
         }
         function readsOwnResult() {
-          return !isHowell()
-            ? myTable() == resource.data.nsPairIndex + 1
-            : myTable() == resource.data.table;
+          // saveResult reads a board before creating it, so claimed tables need
+          // access to an empty result document as well as their own live rows.
+          return resource == null
+            ? myTable() > 0
+            : (!isHowell()
+              ? myTable() == resource.data.nsPairIndex + 1
+              : myTable() == resource.data.table);
         }
         function writesOwnResult() {
           return myTable() > 0
