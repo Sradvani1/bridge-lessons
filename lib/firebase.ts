@@ -21,10 +21,24 @@ function getServices(): Promise<{ db: Firestore; auth: Auth }> {
 
   servicesPromise ??= (async () => {
     const { initializeApp, getApps } = await import("firebase/app")
-    const { getAuth, signInAnonymously } = await import("firebase/auth")
+    const { getAuth, signInAnonymously, onAuthStateChanged } = await import("firebase/auth")
     const { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } = await import("firebase/firestore")
     const app = getApps()[0] ?? initializeApp(firebaseConfig)
     const auth = getAuth(app)
+    // Wait for persisted anonymous identity before deciding to sign in.
+    // Reading auth.currentUser synchronously returns null on reload even when
+    // a user is persisted, which used to mint a fresh anonymous user and
+    // orphan the director's active game lock.
+    try {
+      await auth.authStateReady()
+    } catch {
+      await new Promise<void>((resolve) => {
+        const unsubscribe = onAuthStateChanged(auth, () => {
+          unsubscribe()
+          resolve()
+        })
+      })
+    }
     if (!auth.currentUser) await signInAnonymously(auth)
     // Keep an offline score queued if a scorer briefly loses Wi-Fi or refreshes.
     let db: Firestore

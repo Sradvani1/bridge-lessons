@@ -78,6 +78,7 @@ export async function createGame(game: NewGame): Promise<{ gameId: string; code:
       })
       return { gameId, code }
     } catch (error) {
+      if (error instanceof GameStoreError && error.message.includes("already in progress")) throw error
       if (attempt === 4) throw error
     }
   }
