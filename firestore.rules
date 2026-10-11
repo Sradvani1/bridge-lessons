@@ -14,9 +14,10 @@ service cloud.firestore {
     match /active-game/current {
       function staleGame() {
         let game = get(/databases/$(database)/documents/games/$(resource.data.gameId)).data;
-        let lastActivity = ('lastActivityAt' in game.keys()) ? game.lastActivityAt : game.createdAt;
-        return game.status != 'playing'
-          || lastActivity <= request.time.toMillis() - 7200000;
+        // A lock pointing at a deleted game must not wedge the lobby forever.
+        return game == null
+          || game.status != 'playing'
+          || (('lastActivityAt' in game.keys()) ? game.lastActivityAt : game.createdAt) <= request.time.toMillis() - 7200000;
       }
       function validNewActiveGame() {
         return request.resource.data.keys().hasAll(['gameId', 'directorUid'])
