@@ -27,6 +27,27 @@ const ACTIVE_GAME_TIMEOUT_MS = 2 * 60 * 60 * 1000
 
 export class GameStoreError extends Error {}
 
+/** True for Firestore permission-denied failures (never shown verbatim in UI). */
+export function isPermissionDenied(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  if ((error as { code?: unknown }).code === "permission-denied") return true
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes("Missing or insufficient permissions")
+}
+
+/** Re-read a single canonical result (used to verify on save denial). */
+export async function fetchResult(
+  gameId: string,
+  boardNumber: number,
+  nsPairIndex: number,
+  game: StoredGame,
+): Promise<StoredResult | null> {
+  const db = await getDb()
+  const snapshot = await getDoc(doc(db, "games", gameId, "results", resultDocumentId(boardNumber, nsPairIndex)))
+  if (!snapshot.exists()) return null
+  return parseStoredResult(snapshot.data(), game)
+}
+
 const ACTIVE_GAME_PATH = ["active-game", "current"] as const
 
 export type ActiveGame = { gameId: string; directorUid: string }

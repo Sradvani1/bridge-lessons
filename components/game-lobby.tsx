@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { createGame, findGameIdByCode, subscribeActiveGame, type ActiveGame } from "@/lib/game-store"
+import { createGame, findGameIdByCode, isPermissionDenied, subscribeActiveGame, type ActiveGame } from "@/lib/game-store"
 import { firebaseConfigured, requireUserId } from "@/lib/firebase"
 import { howellBoardCount, howellPairCount, howellRoundCount, type HowellTableCount } from "@/lib/howell"
 
@@ -28,13 +28,14 @@ export default function GameLobby() {
 
   useEffect(() => {
     if (!firebaseConfigured()) return
-    requireUserId().then(setUserId).catch((error: unknown) => setMessage(error instanceof Error ? `Could not identify this device: ${error.message}` : "Could not identify this device."))
+    requireUserId().then(setUserId).catch(() => setMessage("Could not identify this device. Check the connection and try again."))
   }, [identityAttempt])
 
   useEffect(() => {
     if (!userId) return
     return subscribeActiveGame(setActiveGame, (error) => {
-      setMessage(`Could not check the current game status: ${error.message}`)
+      console.warn("[bridge:active-game-subscribe]", error.message)
+      setMessage("Having trouble reaching the game service. Check the connection and try again.")
       setActiveGame(null)
     })
   }, [userId])
@@ -67,7 +68,9 @@ export default function GameLobby() {
       localStorage.setItem(`bridge-code-${game.gameId}`, game.code)
       router.push(`/play/${game.gameId}?code=${game.code}`)
     } catch (error) {
-      setMessage(error instanceof Error ? `Could not start the game: ${error.message}` : "Could not start the game. Check your connection and try again.")
+      console.warn("[bridge:start-game]", error)
+      if (error instanceof Error && !isPermissionDenied(error)) setMessage(`Could not start the game: ${error.message}`)
+      else setMessage("Could not start the game. Check your connection and try again.")
     } finally {
       setBusy(false)
     }
@@ -81,7 +84,9 @@ export default function GameLobby() {
       if (!gameId) setMessage("That game code was not found.")
       else router.push(`/play/${gameId}`)
     } catch (error) {
-      setMessage(error instanceof Error ? `Could not join the game: ${error.message}` : "Could not join the game. Check your connection and try again.")
+      console.warn("[bridge:join-game]", error)
+      if (error instanceof Error && !isPermissionDenied(error)) setMessage(`Could not join the game: ${error.message}`)
+      else setMessage("Could not join the game. Check your connection and try again.")
     } finally {
       setBusy(false)
     }

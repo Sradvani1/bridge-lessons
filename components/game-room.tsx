@@ -5,11 +5,12 @@ import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { rankBoardResults } from "@/lib/bridge-scoring"
 import { deriveNsScore, type ResultKind, type StoredGame, type StoredResult } from "@/lib/game-data"
-import { cancelGame, claimTable, finishGame, releaseTable, saveResult, subscribeGame, subscribeResults, type ResultInput } from "@/lib/game-store"
+import { cancelGame, claimTable, fetchResult, finishGame, isPermissionDenied, releaseTable, saveResult, subscribeGame, subscribeResults, type ResultInput } from "@/lib/game-store"
 import { requireUserId } from "@/lib/firebase"
 import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, type RoundIndex } from "@/lib/mitchell"
-import { howellAssignmentAt, howellAssignments, howellResultCount, howellRoundCount } from "@/lib/howell"
+import { howellAssignmentAt, howellAssignments, howellBoardCount, howellResultCount, howellRoundCount } from "@/lib/howell"
 import { computeHowellStandings, computeStandings, howellMatchpointPercentage, matchpointPercentage, type StandingsRow } from "@/lib/standings"
+import ScoreGlossary from "@/components/score-glossary"
 
 const GameJoinQr = dynamic(() => import("@/components/game-join-qr"), { ssr: false })
 
@@ -23,6 +24,8 @@ type FormState = {
   tricks: string
   manualScore: string
 }
+
+const RESULTS_FEED_ERROR = "Having trouble loading live scores. They will appear when the connection recovers."
 
 const initialForm: FormState = { kind: "contract", level: "", strain: "NT", declarer: "ns", doubling: "none", tricks: "", manualScore: "" }
 const fieldClass = "mt-1 min-h-12 w-full rounded-lg border border-[#9cb0a1] bg-white px-3 text-base text-[#17221e]"
@@ -65,6 +68,14 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const [releasingTable, setReleasingTable] = useState<number | null>(null)
   const userIdRef = useRef<string | null>(null)
   const claimedTableRef = useRef<number | null>(null)
+  const gameStrikesRef = useRef(0)
+  const resultsStrikesRef = useRef(0)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [resultsRetryKey, setResultsRetryKey] = useState(0)
+
+  useEffect(() => () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+  }, [])
   const [joinCode] = useState(() => {
     if (initialJoinCode) return initialJoinCode
     if (typeof window === "undefined") return ""
@@ -74,6 +85,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   useEffect(() => {
     if (!identityReady) return
     return subscribeGame(gameId, (next, hasPendingWrites) => {
+      gameStrikesRef.current = 0
       setGame(next)
       setGameLoaded(true)
       setGameConnectionError("")
@@ -88,8 +100,18 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       }
       claimedTableRef.current = nextClaimedTable
     }, (next) => {
-      setGameLoaded(true)
-      setGameConnectionError(next.message)
+      console.warn("[bridge:game-subscribe]", next.message)
+      gameStrikesRef.current += 1
+      // Transient blips (token refresh, status flip) recover on resubscribe.
+      // Only surface the banner when the feed stays down.
+      if (gameStrikesRef.current >= 3) {
+        setGameLoaded(true)
+        setGameConnectionError("Lost connection to the game. Check the connection, then try again.")
+      } else {
+        const strikes = gameStrikesRef.current
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = setTimeout(() => setRetryKey((value) => value + 1), 1000 * strikes)
+      }
     })
   }, [gameId, identityReady, retryKey])
 
@@ -141,10 +163,22 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       ? { viewer: "director-or-finished" as const }
       : resultsTable ? { viewer: "table" as const, table: resultsTable } : null
     return view ? subscribeResults(gameId, view, game, (next, hasPendingWrites) => {
+      resultsStrikesRef.current = 0
       setResults(next)
       setResultsHavePendingWrites(hasPendingWrites)
-    }, (next) => setError(next.message)) : undefined
-  }, [director, game, gameId, gameStatus, resultsTable])
+      setError((previous) => previous === RESULTS_FEED_ERROR ? "" : previous)
+    }, (next) => {
+      console.warn("[bridge:results-subscribe]", next.message)
+      resultsStrikesRef.current += 1
+      if (resultsStrikesRef.current >= 3) {
+        setError(RESULTS_FEED_ERROR)
+      } else {
+        const strikes = resultsStrikesRef.current
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = setTimeout(() => setResultsRetryKey((value) => value + 1), 1000 * strikes)
+      }
+    }) : undefined
+  }, [director, game, gameId, gameStatus, resultsTable, resultsRetryKey])
 
   async function chooseTable(nextTable: number) {
     if (!userId || !game || game.status !== "playing" || claimingTable) return
@@ -232,7 +266,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     : table ? `${results.length} of ${expectedResultCount / tableNumbers.length} results entered at your table.` : "Choose a table to enter results."
 
   return <div className="space-y-6">
-    <p aria-live="polite" className="sr-only">{message}</p>
+    {message ? <p role="status" className="rounded-xl bg-[#edf4ef] p-4 font-semibold text-[#173c2a]">{message}</p> : null}
     {error ? <p role="alert" className="rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{error}</p> : null}
     <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -262,29 +296,34 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{tableNumbers.map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" disabled={releasingTable !== null} onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{releasingTable === number ? "Releasing..." : "Release"}</button> : null}</div>)}</div>
     </section> : null}
 
-    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={scorerRound} setRound={setRound} results={results} onError={setError} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
+    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={scorerRound} setRound={setRound} results={results} onError={setError} onNotice={setMessage} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
 
     <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Standings</h2>
-      {canSeeResults ? howellStandings && howellTableCount ? <div className="mt-4"><StandingsTable title="Pairs" rows={howellStandings} tableCount={howellTableCount} /></div> : standings ? <div className="mt-4 grid gap-5 md:grid-cols-2"><StandingsTable title="North-South" rows={standings.ns} /><StandingsTable title="East-West" rows={standings.ew} /></div> : null : <p className="mt-3 leading-7 text-[#52615a]">Scores will appear here when the director finishes and reveals the game.</p>}
+      {canSeeResults ? howellStandings && howellTableCount ? <div className="mt-4"><ScoreGlossary variant="howell" tableCount={howellTableCount} /><div className="mt-3"><StandingsTable title="Pairs" rows={howellStandings} tableCount={howellTableCount} /></div></div> : standings ? <div className="mt-4"><ScoreGlossary variant="mitchell" /><div className="mt-3 grid gap-5 md:grid-cols-2"><StandingsTable title="North-South" rows={standings.ns} /><StandingsTable title="East-West" rows={standings.ew} /></div></div> : null : <p className="mt-3 leading-7 text-[#52615a]">Scores will appear here when the director finishes and reveals the game.</p>}
     </section>
 
-    {canSeeResults ? <Traveller results={results} /> : null}
+    {canSeeResults ? <Traveller results={results} movement={game.movement} tableCount={howellTableCount} /> : null}
   </div>
 }
 
 function StandingsTable({ title, rows, tableCount }: { title: string; rows: StandingsRow[]; tableCount?: 2 | 3 }) {
-  return <div><h3 className="font-bold text-[#173c2a]">{title}</h3><div className="mt-2 space-y-2">
-    {[...rows].sort((left, right) => left.place - right.place || left.pairIndex - right.pairIndex).map((row) => <div key={row.pairIndex} className="flex justify-between rounded-lg bg-[#f3f7f3] px-3 py-3"><span>#{row.place} {row.label || `${title} ${row.pairIndex + 1}`}</span><span className="tabular-nums font-bold">{row.totalMatchpoints}{tableCount ? ` · ${howellMatchpointPercentage(row.totalMatchpoints, tableCount)}% · ${row.boardsPlayed}` : `/48 · ${matchpointPercentage(row.totalMatchpoints)}% · ${row.boardsPlayed}/12`}</span></div>)}
+  const boardTotal = tableCount ? howellBoardCount(tableCount) : 12
+  return <div><h3 className="font-bold text-[#173c2a]">{title}</h3><div role="table" aria-label={`${title} standings`} className="mt-2 space-y-2">
+    <div role="row" className="grid grid-cols-[1fr_3rem_4.5rem_4rem] items-center gap-2 px-3 text-xs font-semibold uppercase tracking-wide text-[#52615a]"><span role="columnheader">Pair</span><span role="columnheader" className="text-right">MP</span><span role="columnheader" className="text-right">%</span><span role="columnheader" className="text-right">B</span></div>
+    {[...rows].sort((left, right) => left.place - right.place || left.pairIndex - right.pairIndex).map((row) => {
+      const percent = tableCount ? howellMatchpointPercentage(row.totalMatchpoints, tableCount) : matchpointPercentage(row.totalMatchpoints)
+      return <div role="row" key={row.pairIndex} className="grid grid-cols-[1fr_3rem_4.5rem_4rem] items-center gap-2 rounded-lg bg-[#f3f7f3] px-3 py-3"><span role="rowheader" className="min-w-0 break-words">#{row.place} {row.label || `${title} ${row.pairIndex + 1}`}</span><span role="cell" className="tabular-nums text-right font-bold">{row.totalMatchpoints}</span><span role="cell" className="tabular-nums text-right font-bold">{percent}%</span><span role="cell" className="tabular-nums text-right font-bold">{row.boardsPlayed}/{boardTotal}</span></div>
+    })}
   </div></div>
 }
 
 function HowellMovementCard({ pairs, tableCount }: { pairs: readonly string[]; tableCount: 2 | 3 }) {
   const assignments = howellAssignments(tableCount)
-  return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: Boards {assignment.boardNumbers.join("-")} · {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
+  return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: Boards {assignment.boardNumbers.join("-")} | {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
 }
 
-function Traveller({ results }: { results: StoredResult[] }) {
+function Traveller({ results, movement, tableCount }: { results: StoredResult[]; movement?: "mitchell" | "howell"; tableCount?: 2 | 3 | null }) {
   const byBoard = new Map<number, StoredResult[]>()
   for (const result of results) {
     if (deriveNsScore(result) === null) continue
@@ -292,29 +331,31 @@ function Traveller({ results }: { results: StoredResult[] }) {
     rows.push(result)
     byBoard.set(result.boardNumber, rows)
   }
-  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><h2 className="text-2xl font-bold text-[#123a28]">Board Travellers</h2><div className="mt-4 grid gap-4 lg:grid-cols-2">
+  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><h2 className="text-2xl font-bold text-[#123a28]">Board Travellers</h2><ScoreGlossary variant={movement === "howell" ? "howell" : "mitchell"} tableCount={tableCount ?? undefined} /><div className="mt-4 grid gap-4 lg:grid-cols-2">
     {[...byBoard.entries()].sort(([left], [right]) => left - right).map(([board, rows]) => {
       const ranked = new Map(rankBoardResults(rows.map((result) => ({ id: `${result.table}-${result.nsPairIndex}`, label: "", nsScore: deriveNsScore(result) ?? 0 }))).map((row) => [row.id, row.matchpoints]))
-      return <article key={board} className="rounded-xl bg-[#f3f7f3] p-4"><h3 className="font-bold text-[#173c2a]">Board {board}</h3><div className="mt-2 space-y-1 text-[#52615a]">{rows.sort((left, right) => left.table - right.table).map((result) => <p key={`${result.table}-${result.nsPairIndex}`}>Table {result.table}: NS {deriveNsScore(result)} · {ranked.get(`${result.table}-${result.nsPairIndex}`) ?? 0} MP</p>)}</div></article>
+      return <article key={board} className="rounded-xl bg-[#f3f7f3] p-4"><h3 className="font-bold text-[#173c2a]">Board {board}</h3><p className="mt-1 text-xs font-semibold uppercase tracking-wide text-[#52615a]">North-South score | Matchpoints on this board</p><div className="mt-2 space-y-1 text-[#52615a]">{rows.sort((left, right) => left.table - right.table).map((result) => <p key={`${result.table}-${result.nsPairIndex}`}>Table {result.table}: NS {deriveNsScore(result)} <span aria-hidden="true">|</span> {ranked.get(`${result.table}-${result.nsPairIndex}`) ?? 0} MP</p>)}</div></article>
     })}
   </div></section>
 }
 
-function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, director, locked, onBack }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
+function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, onNotice, director, locked, onBack }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; onNotice: (notice: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
   const assignment = game.movement === "howell" ? howellAssignmentAt(game.tableCount, table, round) : null
   const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3, round as RoundIndex)
   const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, round as RoundIndex)
   const nsPairIndex = assignment?.nsPairIndex ?? table - 1
   const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : 3
-  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Follow the Howell movement card for pair and board changes." : " East-West moves to the next higher table; pass boards to the next lower table."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div><div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} director={director} locked={locked} /> })}</div></section>
+  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Follow the Howell movement card for pair and board changes." : " East-West moves to the next higher table; pass boards to the next lower table."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div><div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} game={game} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} onNotice={onNotice} director={director} locked={locked} /> })}</div></section>
 }
 
-function BoardCard({ gameId, table, round, board, ewPair, nsPairIndex, existing, onError, director, locked }: { gameId: string; table: number; round: number; board: number; ewPair: number; nsPairIndex: number; existing?: StoredResult; onError: (error: string) => void; director: boolean; locked: boolean }) {
+function BoardCard({ gameId, game, table, round, board, ewPair, nsPairIndex, existing, onError, onNotice, director, locked }: { gameId: string; game: StoredGame; table: number; round: number; board: number; ewPair: number; nsPairIndex: number; existing?: StoredResult; onError: (error: string) => void; onNotice: (notice: string) => void; director: boolean; locked: boolean }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<FormState>(() => existing ? formFor(existing) : initialForm)
   const [saving, setSaving] = useState(false)
+  const [savedLocal, setSavedLocal] = useState(false)
   const vulnerability = boardVulnerability(board) ?? "none"
-  const readOnly = locked || (!director && Boolean(existing))
+  const saved = Boolean(existing) || savedLocal
+  const readOnly = locked || (!director && saved)
 
   async function save() {
     const level = numberValue(form.level)
@@ -328,16 +369,37 @@ function BoardCard({ gameId, table, round, board, ewPair, nsPairIndex, existing,
     setSaving(true)
     try {
       await saveResult(gameId, input)
+      // Server acknowledged the write: treat as saved immediately instead of
+      // waiting on the slow confirming snapshot (prevents double-submit).
+      setSavedLocal(true)
       setOpen(false)
     } catch (error) {
-      onError(error instanceof Error ? error.message : "Could not save this board.")
+      console.warn("[bridge:save-result]", { board, error })
+      if (isPermissionDenied(error)) {
+        // Check the folder before complaining: the score may already be filed
+        // (own retry, director pre-entry) even though this write was refused.
+        try {
+          const current = await fetchResult(gameId, board, nsPairIndex, game)
+          if (current && deriveNsScore(current) !== null) {
+            setSavedLocal(true)
+            setOpen(false)
+            onNotice(`Board ${board} is already saved.`)
+            return
+          }
+        } catch {
+          // Fall through to the generic message below.
+        }
+        onError("Could not save this board. It may already be saved, or the game may have finished. Ask the director.")
+      } else {
+        onError(error instanceof Error ? error.message : "Could not save this board. Check the connection and try again.")
+      }
     } finally {
       setSaving(false)
     }
   }
 
   const score = existing ? deriveNsScore(existing) : null
-  return <article className="rounded-xl border border-[#b7c6ba] p-4"><button type="button" disabled={readOnly} onClick={() => setOpen((value) => !value)} className="flex min-h-12 w-full items-center justify-between text-left font-bold text-[#123a28] disabled:cursor-default"><span>Board {board} · {vulnerability === "both" ? "Both vulnerable" : vulnerability === "none" ? "Neither vulnerable" : `${vulnerability.toUpperCase()} vulnerable`}</span>{locked ? <span>Locked</span> : existing ? <span>{director ? "Edit" : "Saved"}</span> : null}</button>{existing && !open ? <p className="mt-2 text-[#52615a]">Saved NS score: {score}</p> : null}{open && !readOnly ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-[#52615a]">Dealer: {boardDealer(board)}</p><label>Result<select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value as ResultKind })} className={fieldClass}><option value="contract">Contract</option><option value="passed-out">Passed Out</option>{director ? <option value="manual">Manual Director Score</option> : null}</select></label>{form.kind === "contract" ? <ContractFields form={form} setForm={setForm} /> : null}{form.kind === "manual" ? <label>NS score<input type="number" value={form.manualScore} onChange={(event) => setForm({ ...form, manualScore: event.target.value })} className={fieldClass} /></label> : null}<div className="flex items-end"><button type="button" onClick={save} disabled={saving} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{saving ? "Saving..." : "Save result"}</button></div></div> : null}</article>
+  return <article className="rounded-xl border border-[#b7c6ba] p-4"><button type="button" disabled={readOnly} onClick={() => setOpen((value) => !value)} className="flex min-h-12 w-full items-center justify-between text-left font-bold text-[#123a28] disabled:cursor-default"><span>Board {board} · {vulnerability === "both" ? "Both vulnerable" : vulnerability === "none" ? "Neither vulnerable" : `${vulnerability.toUpperCase()} vulnerable`}</span>{locked ? <span>Locked</span> : saved ? <span>{director && existing ? "Edit" : "Saved"}</span> : null}</button>{existing && !open ? <p className="mt-2 text-[#52615a]">Saved NS score: {score}</p> : null}{savedLocal && !existing && !open ? <p className="mt-2 text-[#52615a]">Saved. It will appear for everyone once synced.</p> : null}{open && !readOnly ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-[#52615a]">Dealer: {boardDealer(board)}</p><label>Result<select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value as ResultKind })} className={fieldClass}><option value="contract">Contract</option><option value="passed-out">Passed Out</option>{director ? <option value="manual">Manual Director Score</option> : null}</select></label>{form.kind === "contract" ? <ContractFields form={form} setForm={setForm} /> : null}{form.kind === "manual" ? <label>NS score<input type="number" value={form.manualScore} onChange={(event) => setForm({ ...form, manualScore: event.target.value })} className={fieldClass} /></label> : null}<div className="flex items-end"><button type="button" onClick={save} disabled={saving} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{saving ? "Saving..." : "Save result"}</button></div></div> : null}</article>
 }
 
 function ContractFields({ form, setForm }: { form: FormState; setForm: (form: FormState) => void }) {
