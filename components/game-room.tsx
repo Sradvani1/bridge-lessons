@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { rankBoardResults } from "@/lib/bridge-scoring"
 import { deriveNsScore, type ResultKind, type StoredGame, type StoredResult } from "@/lib/game-data"
-import { cancelGame, claimTable, fetchResult, finishGame, isPermissionDenied, releaseTable, saveResult, subscribeGame, subscribeResults, type ResultInput } from "@/lib/game-store"
+import { cancelGame, claimTable, fetchGame, fetchResult, fetchResults, finishGame, isPermissionDenied, releaseTable, saveResult, type ResultInput } from "@/lib/game-store"
 import { requireUserId } from "@/lib/firebase"
 import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, type RoundIndex } from "@/lib/mitchell"
 import { howellAssignmentAt, howellAssignments, howellBoardCount, howellResultCount, howellRoundCount } from "@/lib/howell"
@@ -25,13 +25,43 @@ type FormState = {
   manualScore: string
 }
 
-const RESULTS_FEED_ERROR = "Having trouble loading live scores. They will appear when the connection recovers."
+const STALE_REFRESH_ERROR = "Couldn't refresh just now. Showing the last update."
+const POLL_INTERVAL_MS = 15000
 
 const initialForm: FormState = { kind: "contract", level: "", strain: "NT", declarer: "ns", doubling: "none", tricks: "", manualScore: "" }
 const fieldClass = "mt-1 min-h-12 w-full rounded-lg border border-[#9cb0a1] bg-white px-3 text-base text-[#17221e]"
 
 function numberValue(value: string): number | null {
   return /^-?\d+$/.test(value) ? Number(value) : null
+}
+
+/** Director's table/round view, persisted per game so refreshes restore it. */
+function readTableView(gameId: string): { table: number | null; round: number } {
+  const fallback = { table: null as number | null, round: 0 }
+  if (typeof window === "undefined") return fallback
+  try {
+    const raw = localStorage.getItem(`bridge-tableview-${gameId}`)
+    if (!raw) return fallback
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== "object" || parsed === null) return fallback
+    const { table, round } = parsed as { table?: unknown; round?: unknown }
+    return {
+      table: typeof table === "number" && Number.isInteger(table) && table >= 1 && table <= 3 ? table : null,
+      round: typeof round === "number" && Number.isInteger(round) && round >= 0 && round <= 4 ? round : 0,
+    }
+  } catch {
+    return fallback
+  }
+}
+
+function describeInput(board: number, input: ResultInput): string {
+  if (input.kind === "passed-out") return `Board ${board}: Passed out. Save?`
+  if (input.kind === "manual") return `Board ${board}: director score ${input.manualScore} to North-South. Save?`
+  const strainNames = { C: "Clubs", D: "Diamonds", H: "Hearts", S: "Spades", NT: "No Trump" } as const
+  const strain = input.strain ?? "NT"
+  const doublingText = input.doubling === "doubled" ? " Doubled" : input.doubling === "redoubled" ? " Redoubled" : ""
+  const side = input.declarer === "ns" ? "North-South" : "East-West"
+  return `Board ${board}: ${input.level ?? "?"} ${strainNames[strain]} by ${side}, ${input.tricks ?? "?"} tricks${doublingText}. Save?`
 }
 
 function formFor(existing: StoredResult): FormState {
@@ -51,12 +81,9 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const [game, setGame] = useState<StoredGame | null>(null)
   const [gameLoaded, setGameLoaded] = useState(false)
   const [gameConnectionError, setGameConnectionError] = useState("")
-  const [retryKey, setRetryKey] = useState(0)
-  const [gameHasPendingWrites, setGameHasPendingWrites] = useState(false)
   const [results, setResults] = useState<StoredResult[]>([])
-  const [resultsHavePendingWrites, setResultsHavePendingWrites] = useState(false)
-  const [selectedTable, setSelectedTable] = useState<number | null>(null)
-  const [round, setRound] = useState(0)
+  const [selectedTable, setSelectedTable] = useState<number | null>(() => readTableView(gameId).table)
+  const [round, setRound] = useState(() => readTableView(gameId).round)
   const [error, setError] = useState("")
   const [message, setMessage] = useState("")
   const [director, setDirector] = useState(false)
@@ -66,16 +93,13 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const [finishing, setFinishing] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [releasingTable, setReleasingTable] = useState<number | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
   const userIdRef = useRef<string | null>(null)
   const claimedTableRef = useRef<number | null>(null)
-  const gameStrikesRef = useRef(0)
-  const resultsStrikesRef = useRef(0)
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [resultsRetryKey, setResultsRetryKey] = useState(0)
-
-  useEffect(() => () => {
-    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
-  }, [])
+  const gameRef = useRef<StoredGame | null>(null)
+  const selectedTableRef = useRef<number | null>(null)
+  const refreshInFlightRef = useRef(false)
   const [joinCode] = useState(() => {
     if (initialJoinCode) return initialJoinCode
     if (typeof window === "undefined") return ""
@@ -83,15 +107,43 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   })
 
   useEffect(() => {
-    if (!identityReady) return
-    return subscribeGame(gameId, (next, hasPendingWrites) => {
-      gameStrikesRef.current = 0
+    selectedTableRef.current = selectedTable
+    try {
+      localStorage.setItem(`bridge-tableview-${gameId}`, JSON.stringify({ table: selectedTable, round }))
+    } catch {
+      // Private browsing may refuse storage; the view just won't persist.
+    }
+  }, [gameId, selectedTable, round])
+
+  useEffect(() => {
+    gameRef.current = game
+  }, [game])
+
+  /** One-shot refresh: fetch the game, then the visible results. No open lines. */
+  const refresh = useCallback(async (options?: { quiet?: boolean }) => {
+    if (refreshInFlightRef.current) return
+    refreshInFlightRef.current = true
+    if (!options?.quiet) setRefreshing(true)
+    try {
+      const next = await fetchGame(gameId)
+      if (!next) {
+        setGame(null)
+        gameRef.current = null
+        setResults([])
+        setGameLoaded(true)
+        setLastUpdatedAt(Date.now())
+        return
+      }
+      const uid = userIdRef.current
+      const isDirector = Boolean(uid && next.directorUid === uid)
+      setDirector(isDirector)
       setGame(next)
+      gameRef.current = next
       setGameLoaded(true)
       setGameConnectionError("")
-      setGameHasPendingWrites(hasPendingWrites)
-      const nextClaimedTable = next && userIdRef.current
-        ? Array.from({ length: next.movement === "howell" ? next.tableCount : 3 }, (_, index) => index + 1).find((number) => next.tables[String(number)] === userIdRef.current) ?? null
+      const tableCount = next.movement === "howell" ? next.tableCount : 3
+      const nextClaimedTable = uid
+        ? Array.from({ length: tableCount }, (_, index) => index + 1).find((number) => next.tables[String(number)] === uid) ?? null
         : null
       if (nextClaimedTable) {
         setClaimingTable(null)
@@ -99,33 +151,41 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
         setMessage(`This device was released from Table ${claimedTableRef.current}. Ask the director to assign a table.`)
       }
       claimedTableRef.current = nextClaimedTable
-    }, (next) => {
-      console.warn("[bridge:game-subscribe]", next.message)
-      gameStrikesRef.current += 1
-      // Transient blips (token refresh, status flip) recover on resubscribe.
-      // Only surface the banner when the feed stays down.
-      if (gameStrikesRef.current >= 3) {
-        setGameLoaded(true)
-        setGameConnectionError("Lost connection to the game. Check the connection, then try again.")
+      const viewTable = isDirector ? selectedTableRef.current : nextClaimedTable
+      const view = isDirector || next.status === "finished"
+        ? { viewer: "director-or-finished" as const }
+        : viewTable ? { viewer: "table" as const, table: viewTable } : null
+      if (view) {
+        setResults(await fetchResults(gameId, view, next))
       } else {
-        const strikes = gameStrikesRef.current
-        if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
-        retryTimerRef.current = setTimeout(() => setRetryKey((value) => value + 1), 1000 * strikes)
+        // No table claimed: never show another table's leftovers.
+        setResults([])
       }
-    })
-  }, [gameId, identityReady, retryKey])
+      setLastUpdatedAt(Date.now())
+      setError((previous) => previous === STALE_REFRESH_ERROR ? "" : previous)
+    } catch (refreshError) {
+      console.warn("[bridge:refresh]", refreshError)
+      if (gameRef.current) {
+        setError(STALE_REFRESH_ERROR)
+      } else {
+        setGameLoaded(true)
+        setGameConnectionError("Could not load this game. Check the connection, then try again.")
+      }
+    } finally {
+      refreshInFlightRef.current = false
+      setRefreshing(false)
+    }
+  }, [gameId])
 
-  const directorUid = game?.directorUid
   useEffect(() => {
     let active = true
     requireUserId()
       .then((uid) => {
-        if (active) {
-          setUserId(uid)
-          userIdRef.current = uid
-          setDirector(directorUid === uid)
-          setIdentityReady(true)
-        }
+        if (!active) return
+        setUserId(uid)
+        userIdRef.current = uid
+        setIdentityReady(true)
+        void refresh()
       })
       .catch((next: unknown) => {
         if (active) {
@@ -134,7 +194,21 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
         }
       })
     return () => { active = false }
-  }, [directorUid])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!identityReady || game?.status !== "playing") return
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void refresh({ quiet: true })
+    }, POLL_INTERVAL_MS)
+    const onFocus = () => void refresh({ quiet: true })
+    window.addEventListener("focus", onFocus)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener("focus", onFocus)
+    }
+  }, [identityReady, game?.status, refresh])
 
   const claimedTable = game && userId
     ? Array.from({ length: game.movement === "howell" ? game.tableCount : 3 }, (_, index) => index + 1).find((number) => game.tables[String(number)] === userId) ?? null
@@ -150,35 +224,14 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const table = director ? selectedTable : claimedTable
   const howellAssignment = game?.movement === "howell" && table ? howellAssignmentAt(game.tableCount, table, scorerRound) : null
   const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, scorerRound as RoundIndex) : null
-  const resultsTable = director ? selectedTable : claimedTable
 
   useEffect(() => {
     if (claimedTable) claimedTableRef.current = claimedTable
   }, [claimedTable])
 
-  const gameStatus = game?.status
   useEffect(() => {
-    if (!gameStatus || !game) return
-    const view = director || gameStatus === "finished"
-      ? { viewer: "director-or-finished" as const }
-      : resultsTable ? { viewer: "table" as const, table: resultsTable } : null
-    return view ? subscribeResults(gameId, view, game, (next, hasPendingWrites) => {
-      resultsStrikesRef.current = 0
-      setResults(next)
-      setResultsHavePendingWrites(hasPendingWrites)
-      setError((previous) => previous === RESULTS_FEED_ERROR ? "" : previous)
-    }, (next) => {
-      console.warn("[bridge:results-subscribe]", next.message)
-      resultsStrikesRef.current += 1
-      if (resultsStrikesRef.current >= 3) {
-        setError(RESULTS_FEED_ERROR)
-      } else {
-        const strikes = resultsStrikesRef.current
-        if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
-        retryTimerRef.current = setTimeout(() => setResultsRetryKey((value) => value + 1), 1000 * strikes)
-      }
-    }) : undefined
-  }, [director, game, gameId, gameStatus, resultsTable, resultsRetryKey])
+    if (claimedTable) claimedTableRef.current = claimedTable
+  }, [claimedTable])
 
   async function chooseTable(nextTable: number) {
     if (!userId || !game || game.status !== "playing" || claimingTable) return
@@ -191,10 +244,12 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       return
     }
     setError("")
+    if (!window.confirm(`Score for Table ${nextTable}? Tap OK to claim it, or Cancel to pick a different table.`)) return
     setClaimingTable(nextTable)
     try {
       await claimTable(gameId, nextTable)
       setMessage(`Table ${nextTable} is claimed. Opening the scorer...`)
+      await refresh({ quiet: true })
     } catch {
       setClaimingTable(null)
       setError(`Could not claim Table ${nextTable}. Another device may have claimed it first. Choose another table or ask the director to release it.`)
@@ -202,16 +257,22 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   }
 
   async function finish() {
-    const expectedResultCount = game?.movement === "howell" ? howellResultCount(game.tableCount) : 36
-    if (results.length !== expectedResultCount) {
-      setError(`Enter all ${expectedResultCount} results before revealing. ${expectedResultCount - results.length} remain.`)
-      return
-    }
+    if (!game) return
+    const expectedResultCount = game.movement === "howell" ? howellResultCount(game.tableCount) : 36
     setFinishing(true)
     try {
+      // Count fresh from the server: the on-screen tally can lag by one poll.
+      const fresh = await fetchResults(gameId, { viewer: "director-or-finished" as const }, game)
+      setResults(fresh)
+      if (fresh.length !== expectedResultCount) {
+        setError(`Enter all ${expectedResultCount} results before revealing. ${expectedResultCount - fresh.length} remain.`)
+        return
+      }
       await finishGame(gameId)
+      await refresh({ quiet: true })
     } catch (next) {
-      setError(next instanceof Error ? next.message : "Could not finish this game.")
+      if (next instanceof Error && !isPermissionDenied(next)) setError(next.message)
+      else setError("Could not finish and reveal this game. Check the connection and try again.")
     } finally {
       setFinishing(false)
     }
@@ -224,7 +285,8 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       await cancelGame(gameId)
       router.push("/play")
     } catch (next) {
-      setError(next instanceof Error ? next.message : "Could not cancel this game.")
+      if (next instanceof Error && !isPermissionDenied(next)) setError(next.message)
+      else setError("Could not cancel this game. Check the connection and try again.")
     } finally {
       setCancelling(false)
     }
@@ -236,8 +298,10 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
     try {
       await releaseTable(gameId, nextTable)
       setMessage(`Table ${nextTable} is available for a replacement device.`)
+      await refresh({ quiet: true })
     } catch (next) {
-      setError(next instanceof Error ? next.message : "Could not release this table.")
+      if (next instanceof Error && !isPermissionDenied(next)) setError(next.message)
+      else setError("Could not release this table. Check the connection and try again.")
     } finally {
       setReleasingTable(null)
     }
@@ -246,9 +310,10 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   function retryGame() {
     setError("")
     setGame(null)
+    gameRef.current = null
     setGameLoaded(false)
     setGameConnectionError("")
-    setRetryKey((value) => value + 1)
+    void refresh()
   }
 
   if (!gameLoaded) return <p className="rounded-xl bg-[#f3ecdc] p-5 text-[#52615a]">Connecting to the game...</p>
@@ -275,12 +340,13 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
           <p className="mt-1 text-[#52615a]">{progress}</p>
           {director && joinCode ? <p className="mt-3 inline-flex rounded-lg bg-white px-3 py-2 font-bold tracking-[.18em] text-[#123a28]">Join code: {joinCode}</p> : null}
         </div>
-        {director && game.status === "playing" ? <div className="flex flex-wrap gap-3"><button type="button" disabled={results.length !== expectedResultCount || finishing || cancelling} onClick={finish} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{finishing ? "Revealing..." : results.length === expectedResultCount ? "Finish & Reveal" : `${expectedResultCount - results.length} Results Remaining`}</button><button type="button" disabled={finishing || cancelling} onClick={cancel} className="min-h-12 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27] disabled:border-[#c9a5a0] disabled:text-[#a9807b]">{cancelling ? "Cancelling..." : "Cancel Game"}</button></div> : null}
+        {director && game.status === "playing" ? <div className="flex flex-wrap gap-3"><button type="button" disabled={finishing || cancelling} onClick={finish} className="min-h-12 rounded-xl bg-[#1d5138] px-4 font-bold text-white disabled:bg-[#93a89a]">{finishing ? "Revealing..." : "Finish & Reveal"}</button><button type="button" disabled={finishing || cancelling} onClick={cancel} className="min-h-12 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27] disabled:border-[#c9a5a0] disabled:text-[#a9807b]">{cancelling ? "Cancelling..." : "Cancel Game"}</button></div> : null}
       </div>
       {director ? <div className="mt-5 border-t border-[#cbd5cc] pt-5"><GameJoinQr gameId={gameId} />{game.movement === "howell" ? <HowellMovementCard pairs={game.pairs} tableCount={game.tableCount} /> : null}</div> : null}
     </section>
 
-    {gameHasPendingWrites || resultsHavePendingWrites ? <p role="status" className="rounded-xl bg-[#fff8df] p-4 font-semibold text-[#6b4b08]">Saving your latest change. Keep this page open until this message disappears.</p> : null}
+    <button type="button" onClick={() => void refresh()} disabled={refreshing} className="min-h-12 w-full rounded-xl border-2 border-[#1d5138] bg-white px-5 font-bold text-[#173c2a] hover:bg-[#edf4ef] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{refreshing ? "Refreshing…" : "Refresh Scores"}</button>
+    <p className="text-center text-sm text-[#52615a]">{lastUpdatedAt ? `Last updated ${new Date(lastUpdatedAt).toLocaleTimeString()}. Updates automatically every 15 seconds.` : "Updates automatically every 15 seconds."}</p>
 
     {!identityReady && !director ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><p className="font-semibold text-[#52615a]">Identifying this device...</p></section> : null}
     {!table && !director && identityReady && game.status === "playing" ? <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
@@ -296,7 +362,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
       <div className="mt-5 space-y-2"><h3 className="font-bold text-[#173c2a]">Table devices</h3>{tableNumbers.map((number) => <div key={number} className="flex items-center justify-between rounded-lg bg-[#f3f7f3] px-3 py-2"><span>Table {number}: {game.tables[String(number)] ? "claimed" : "available"}</span>{game.tables[String(number)] ? <button type="button" disabled={releasingTable !== null} onClick={() => release(number)} className="min-h-10 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a] disabled:border-[#b7c6ba] disabled:text-[#7c887f]">{releasingTable === number ? "Releasing..." : "Release"}</button> : null}</div>)}</div>
     </section> : null}
 
-    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={scorerRound} setRound={setRound} results={results} onError={setError} onNotice={setMessage} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
+    {table && ewPair ? <TableEntry gameId={gameId} game={game} table={table} nsLabel={game.movement === "howell" ? game.pairs[howellAssignment?.nsPairIndex ?? 0] ?? "Pair" : game.pairs.ns[table - 1] ?? `NS ${table}`} ewLabel={game.movement === "howell" ? game.pairs[howellAssignment?.ewPairIndex ?? 0] ?? "Pair" : game.pairs.ew[ewPair - 1] ?? `EW ${ewPair}`} round={scorerRound} setRound={setRound} results={results} onError={setError} onNotice={setMessage} onSaved={() => void refresh({ quiet: true })} director={director} locked={!director && game.status === "finished"} onBack={director ? () => setSelectedTable(null) : undefined} /> : null}
 
     <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Standings</h2>
@@ -339,16 +405,16 @@ function Traveller({ results, movement, tableCount }: { results: StoredResult[];
   </div></section>
 }
 
-function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, onNotice, director, locked, onBack }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; onNotice: (notice: string) => void; director: boolean; locked: boolean; onBack?: () => void }) {
+function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, onNotice, onSaved, director, locked, onBack }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; onNotice: (notice: string) => void; onSaved: () => void; director: boolean; locked: boolean; onBack?: () => void }) {
   const assignment = game.movement === "howell" ? howellAssignmentAt(game.tableCount, table, round) : null
   const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3, round as RoundIndex)
   const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, round as RoundIndex)
   const nsPairIndex = assignment?.nsPairIndex ?? table - 1
   const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : 3
-  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Follow the Howell movement card for pair and board changes." : " East-West moves to the next higher table; pass boards to the next lower table."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div><div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} game={game} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} onNotice={onNotice} director={director} locked={locked} /> })}</div></section>
+  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Follow the Howell movement card for pair and board changes." : " East-West moves to the next higher table; pass boards to the next lower table."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div><div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div><div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} game={game} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} onNotice={onNotice} onSaved={onSaved} director={director} locked={locked} /> })}</div></section>
 }
 
-function BoardCard({ gameId, game, table, round, board, ewPair, nsPairIndex, existing, onError, onNotice, director, locked }: { gameId: string; game: StoredGame; table: number; round: number; board: number; ewPair: number; nsPairIndex: number; existing?: StoredResult; onError: (error: string) => void; onNotice: (notice: string) => void; director: boolean; locked: boolean }) {
+function BoardCard({ gameId, game, table, round, board, ewPair, nsPairIndex, existing, onError, onNotice, onSaved, director, locked }: { gameId: string; game: StoredGame; table: number; round: number; board: number; ewPair: number; nsPairIndex: number; existing?: StoredResult; onError: (error: string) => void; onNotice: (notice: string) => void; onSaved: () => void; director: boolean; locked: boolean }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<FormState>(() => existing ? formFor(existing) : initialForm)
   const [saving, setSaving] = useState(false)
@@ -366,13 +432,15 @@ function BoardCard({ gameId, game, table, round, board, ewPair, nsPairIndex, exi
     else if (form.kind === "manual" && director && manualScore !== null) input = { boardNumber: board, round, table, nsPairIndex, ewPairIndex: ewPair - 1, kind: "manual", manualScore }
     else if (form.kind === "contract" && level !== null && tricks !== null) input = { boardNumber: board, round, table, nsPairIndex, ewPairIndex: ewPair - 1, kind: "contract", level, tricks, strain: form.strain, declarer: form.declarer, doubling: form.doubling }
     if (!input) return onError(form.kind === "manual" ? "Enter a whole-number North-South score." : "Complete the contract and tricks before saving.")
+    if (!window.confirm(describeInput(board, input))) return
     setSaving(true)
     try {
       await saveResult(gameId, input)
       // Server acknowledged the write: treat as saved immediately instead of
-      // waiting on the slow confirming snapshot (prevents double-submit).
+      // waiting on the next refresh (prevents double-submit).
       setSavedLocal(true)
       setOpen(false)
+      onSaved()
     } catch (error) {
       console.warn("[bridge:save-result]", { board, error })
       if (isPermissionDenied(error)) {
@@ -384,6 +452,7 @@ function BoardCard({ gameId, game, table, round, board, ewPair, nsPairIndex, exi
             setSavedLocal(true)
             setOpen(false)
             onNotice(`Board ${board} is already saved.`)
+            onSaved()
             return
           }
         } catch {

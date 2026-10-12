@@ -4,7 +4,6 @@ import {
   doc,
   getDoc,
   getDocs,
-  onSnapshot,
   query,
   runTransaction,
   updateDoc,
@@ -182,28 +181,13 @@ export async function cancelGame(gameId: string): Promise<void> {
   }
 }
 
-export function subscribeActiveGame(
-  onData: (game: ActiveGame | null) => void,
-  onError: (error: Error) => void,
-): () => void {
-  let cancelled = false
-  let unsubscribe = () => {}
-  getDb()
-    .then((db) => {
-      const nextUnsubscribe = onSnapshot(doc(db, ...ACTIVE_GAME_PATH), (snapshot) => {
-        const data = snapshot.data()
-        const gameId = data?.gameId
-        const directorUid = data?.directorUid
-        onData(typeof gameId === "string" && typeof directorUid === "string" ? { gameId, directorUid } : null)
-      }, onError)
-      if (cancelled) nextUnsubscribe()
-      else unsubscribe = nextUnsubscribe
-    })
-    .catch(onError)
-  return () => {
-    cancelled = true
-    unsubscribe()
-  }
+export async function fetchActiveGame(): Promise<ActiveGame | null> {
+  const db = await getDb()
+  const snapshot = await getDoc(doc(db, ...ACTIVE_GAME_PATH))
+  const data = snapshot.data()
+  const gameId = data?.gameId
+  const directorUid = data?.directorUid
+  return typeof gameId === "string" && typeof directorUid === "string" ? { gameId, directorUid } : null
 }
 
 export type ResultInput = Omit<StoredResult, "updatedBy" | "updatedAt">
@@ -229,29 +213,10 @@ export async function saveResult(gameId: string, input: ResultInput): Promise<vo
   }
 }
 
-export function subscribeGame(
-  gameId: string,
-  onData: (game: StoredGame | null, hasPendingWrites: boolean) => void,
-  onError: (error: Error) => void,
-): () => void {
-  let cancelled = false
-  let unsubscribe = () => {}
-  getDb()
-    .then((db) => {
-      const nextUnsubscribe = onSnapshot(
-        doc(db, "games", gameId),
-        { includeMetadataChanges: true },
-        (snapshot) => onData(snapshot.exists() ? parseStoredGame(snapshot.data()) : null, snapshot.metadata.hasPendingWrites),
-        onError,
-      )
-      if (cancelled) nextUnsubscribe()
-      else unsubscribe = nextUnsubscribe
-    })
-    .catch(onError)
-  return () => {
-    cancelled = true
-    unsubscribe()
-  }
+export async function fetchGame(gameId: string): Promise<StoredGame | null> {
+  const db = await getDb()
+  const snapshot = await getDoc(doc(db, "games", gameId))
+  return snapshot.exists() ? parseStoredGame(snapshot.data()) : null
 }
 
 export type ResultsView =
@@ -263,42 +228,25 @@ export type ResultsView =
  * query must carry the matching filter. Results are sorted client-side to keep
  * Firestore free of composite indexes.
  */
-export function subscribeResults(
+export async function fetchResults(
   gameId: string,
   view: ResultsView,
   game: StoredGame,
-  onData: (results: StoredResult[], hasPendingWrites: boolean) => void,
-  onError: (error: Error) => void,
-): () => void {
-  let cancelled = false
-  let unsubscribe = () => {}
-  getDb()
-    .then((db) => {
-      const constraints = view.viewer === "table"
-        ? [where(game.movement === "howell" ? "table" : "nsPairIndex", "==", game.movement === "howell" ? view.table : view.table - 1)]
-        : []
-      const nextUnsubscribe = onSnapshot(
-        query(collection(db, "games", gameId, "results"), ...constraints),
-        { includeMetadataChanges: true },
-        (snapshot) => {
-          const results: StoredResult[] = []
-          snapshot.forEach((entry) => {
-            const parsed = parseStoredResult(entry.data(), game)
-            if (parsed) results.push(parsed)
-          })
-          results.sort((left, right) =>
-            left.boardNumber - right.boardNumber || left.nsPairIndex - right.nsPairIndex,
-          )
-          onData(results, snapshot.metadata.hasPendingWrites)
-        },
-        onError,
-      )
-      if (cancelled) nextUnsubscribe()
-      else unsubscribe = nextUnsubscribe
-    })
-    .catch(onError)
-  return () => {
-    cancelled = true
-    unsubscribe()
-  }
+): Promise<StoredResult[]> {
+  const db = await getDb()
+  const field = game.movement === "howell" ? "table" : "nsPairIndex"
+  const value = view.viewer === "table"
+    ? (game.movement === "howell" ? view.table : view.table - 1)
+    : null
+  const resultsRef = collection(db, "games", gameId, "results")
+  const snapshot = value === null ? await getDocs(resultsRef) : await getDocs(query(resultsRef, where(field, "==", value)))
+  const results: StoredResult[] = []
+  snapshot.forEach((entry) => {
+    const parsed = parseStoredResult(entry.data(), game)
+    if (parsed) results.push(parsed)
+  })
+  results.sort((left, right) =>
+    left.boardNumber - right.boardNumber || left.nsPairIndex - right.nsPairIndex,
+  )
+  return results
 }
