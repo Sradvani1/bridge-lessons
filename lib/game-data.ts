@@ -68,6 +68,17 @@ export function arePairNamesComplete(names: readonly string[]): boolean {
   return names.length > 0 && names.every((name) => name.trim().length > 0)
 }
 
+export const PAIR_PRESETS = [
+  "Mary and Mrunal",
+  "Bhupinder and Praveen",
+  "Neepa and Kausik",
+  "Ravinder and Prahlad",
+  "Pankaj and Meeta",
+  "Martha and Ling",
+  "Genaro and Lubna",
+  "Milan and Dinesh",
+]
+
 export function resultDocumentId(boardNumber: number, nsPairIndex: number): string {
   return `board-${boardNumber}-ns-${nsPairIndex}`
 }
