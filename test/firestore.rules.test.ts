@@ -353,6 +353,21 @@ test("rejects malformed game setup during atomic creation", async () => {
   await assertFails(batch.commit())
 })
 
+test("rejects games with blank pair names during atomic creation", async () => {
+  const director = environment.authenticatedContext("director").firestore()
+  const blankMitchell = writeBatch(director)
+  blankMitchell.set(doc(director, "games", "blank-mitchell"), { ...game(), pairs: { ns: ["Ava", "", "Mia"], ew: ["A", "B", "C"] } })
+  blankMitchell.set(doc(director, "codes", "ABC234"), { gameId: "blank-mitchell" })
+  blankMitchell.set(doc(director, "active-game", "current"), { gameId: "blank-mitchell", directorUid: "director" })
+  await assertFails(blankMitchell.commit())
+
+  const blankHowell = writeBatch(director)
+  blankHowell.set(doc(director, "games", "blank-howell"), { ...howellGame(2), pairs: ["A", "B", "C", ""] })
+  blankHowell.set(doc(director, "codes", "DEF567"), { gameId: "blank-howell" })
+  blankHowell.set(doc(director, "active-game", "current"), { gameId: "blank-howell", directorUid: "director" })
+  await assertFails(blankHowell.commit())
+})
+
 test("rehearses three scorers through a complete Mitchell game", async () => {
   await seed()
   await seedActiveGame()

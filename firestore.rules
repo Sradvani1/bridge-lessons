@@ -82,11 +82,11 @@ service cloud.firestore {
           && request.resource.data.tableCount in [2, 3]
           && request.resource.data.pairs is list
           && request.resource.data.pairs.size() == request.resource.data.tableCount * 2
-          && request.resource.data.pairs[0] is string && request.resource.data.pairs[0].size() <= 60
-          && request.resource.data.pairs[1] is string && request.resource.data.pairs[1].size() <= 60
-          && request.resource.data.pairs[2] is string && request.resource.data.pairs[2].size() <= 60
-          && request.resource.data.pairs[3] is string && request.resource.data.pairs[3].size() <= 60
-          && (request.resource.data.tableCount == 2 || (request.resource.data.pairs[4] is string && request.resource.data.pairs[4].size() <= 60 && request.resource.data.pairs[5] is string && request.resource.data.pairs[5].size() <= 60)))
+          && request.resource.data.pairs[0] is string && request.resource.data.pairs[0].size() >= 1 && request.resource.data.pairs[0].size() <= 60
+          && request.resource.data.pairs[1] is string && request.resource.data.pairs[1].size() >= 1 && request.resource.data.pairs[1].size() <= 60
+          && request.resource.data.pairs[2] is string && request.resource.data.pairs[2].size() >= 1 && request.resource.data.pairs[2].size() <= 60
+          && request.resource.data.pairs[3] is string && request.resource.data.pairs[3].size() >= 1 && request.resource.data.pairs[3].size() <= 60
+          && (request.resource.data.tableCount == 2 || (request.resource.data.pairs[4] is string && request.resource.data.pairs[4].size() >= 1 && request.resource.data.pairs[4].size() <= 60 && request.resource.data.pairs[5] is string && request.resource.data.pairs[5].size() >= 1 && request.resource.data.pairs[5].size() <= 60)))
           || ((!('movement' in request.resource.data.keys()) || request.resource.data.movement == 'mitchell')
             && !('tableCount' in request.resource.data.keys())
             && request.resource.data.pairs is map
@@ -95,12 +95,12 @@ service cloud.firestore {
             && request.resource.data.pairs.ew is list
             && request.resource.data.pairs.ns.size() == 3
             && request.resource.data.pairs.ew.size() == 3
-            && request.resource.data.pairs.ns[0] is string && request.resource.data.pairs.ns[0].size() <= 60
-            && request.resource.data.pairs.ns[1] is string && request.resource.data.pairs.ns[1].size() <= 60
-            && request.resource.data.pairs.ns[2] is string && request.resource.data.pairs.ns[2].size() <= 60
-            && request.resource.data.pairs.ew[0] is string && request.resource.data.pairs.ew[0].size() <= 60
-            && request.resource.data.pairs.ew[1] is string && request.resource.data.pairs.ew[1].size() <= 60
-            && request.resource.data.pairs.ew[2] is string && request.resource.data.pairs.ew[2].size() <= 60))
+            && request.resource.data.pairs.ns[0] is string && request.resource.data.pairs.ns[0].size() >= 1 && request.resource.data.pairs.ns[0].size() <= 60
+            && request.resource.data.pairs.ns[1] is string && request.resource.data.pairs.ns[1].size() >= 1 && request.resource.data.pairs.ns[1].size() <= 60
+            && request.resource.data.pairs.ns[2] is string && request.resource.data.pairs.ns[2].size() >= 1 && request.resource.data.pairs.ns[2].size() <= 60
+            && request.resource.data.pairs.ew[0] is string && request.resource.data.pairs.ew[0].size() >= 1 && request.resource.data.pairs.ew[0].size() <= 60
+            && request.resource.data.pairs.ew[1] is string && request.resource.data.pairs.ew[1].size() >= 1 && request.resource.data.pairs.ew[1].size() <= 60
+            && request.resource.data.pairs.ew[2] is string && request.resource.data.pairs.ew[2].size() >= 1 && request.resource.data.pairs.ew[2].size() <= 60))
         && request.resource.data.tables is map
         && request.resource.data.tables.keys().size() == 0
         && request.resource.data.resultCount == 0

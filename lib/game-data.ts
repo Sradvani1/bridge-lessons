@@ -61,7 +61,11 @@ function uid(value: unknown): string | null {
 }
 
 function label(value: unknown): string | null {
-  return typeof value === "string" && value.length <= 60 ? value : null
+  return typeof value === "string" && value.length > 0 && value.length <= 60 ? value : null
+}
+
+export function arePairNamesComplete(names: readonly string[]): boolean {
+  return names.length > 0 && names.every((name) => name.trim().length > 0)
 }
 
 export function resultDocumentId(boardNumber: number, nsPairIndex: number): string {
