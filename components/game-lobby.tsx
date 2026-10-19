@@ -120,6 +120,9 @@ export default function GameLobby() {
     }
     setBusy(true)
     try {
+      if (activeGame) {
+        if (!window.confirm("A game is already in progress. Starting here replaces it for everyone. Continue?")) return
+      }
       const game = movement === "howell"
         ? await createGame({ movement: "howell", tableCount: howellTableCount, pairs: trimmedHowell })
         : await createGame({ movement: "mitchell", pairs: { ns: trimmedNs, ew: trimmedEw } })

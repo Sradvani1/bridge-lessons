@@ -6,14 +6,15 @@ import {
   getDocs,
   query,
   runTransaction,
+  setDoc,
   updateDoc,
   where,
-  writeBatch,
 } from "firebase/firestore"
 import { getDb, requireUserId } from "./firebase"
 import {
   parseStoredGame,
   parseStoredResult,
+  pairIndicesForNumber,
   resultDocumentId,
   type StoredGame,
   type StoredResult,
@@ -88,7 +89,7 @@ export async function createGame(game: NewGame): Promise<{ gameId: string; code:
           status: "playing",
           ...game,
           directorUid,
-          tables: {},
+          pairClaims: {},
           resultCount: 0,
           createdAt: now,
           lastActivityAt: now,
@@ -118,22 +119,22 @@ export async function findGameIdByCode(code: string): Promise<string | null> {
   return gameSnapshot.exists() ? gameId : null
 }
 
-export async function claimTable(gameId: string, table: number): Promise<void> {
+export async function claimPair(gameId: string, pairNumber: string): Promise<void> {
   const db = await getDb()
   const uid = await requireUserId()
   try {
-    await updateDoc(doc(db, "games", gameId), { [`tables.${table}`]: uid, lastActivityAt: Date.now() })
+    await updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: uid, lastActivityAt: Date.now() })
   } catch (error) {
-    throw new GameStoreError("Could not claim this table.", { cause: error })
+    throw new GameStoreError("Could not claim this pair.", { cause: error })
   }
 }
 
-export async function releaseTable(gameId: string, table: number): Promise<void> {
+export async function releasePair(gameId: string, pairNumber: string): Promise<void> {
   const db = await getDb()
   try {
-    await updateDoc(doc(db, "games", gameId), { [`tables.${table}`]: deleteField(), lastActivityAt: Date.now() })
+    await updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: deleteField(), lastActivityAt: Date.now() })
   } catch (error) {
-    throw new GameStoreError("Could not release this table.", { cause: error })
+    throw new GameStoreError("Could not release this pair.", { cause: error })
   }
 }
 
@@ -203,13 +204,19 @@ export async function saveResult(gameId: string, input: ResultInput): Promise<vo
   const resultRef = doc(db, "games", gameId, "results", resultDocumentId(input.boardNumber, input.nsPairIndex))
   const gameRef = doc(db, "games", gameId)
 
+  // Two separate writes: the score first, then a best-effort activity
+  // heartbeat. A combined batch evaluates both security paths in one request
+  // and exceeds the per-request expression budget on large movements — and a
+  // heartbeat hiccup must never fail a scorekeeper's save.
   try {
-    const batch = writeBatch(db)
-    batch.set(resultRef, payload)
-    batch.update(gameRef, { lastActivityAt: Date.now() })
-    await batch.commit()
+    await setDoc(resultRef, payload)
   } catch (error) {
     throw new GameStoreError("Could not save this result.", { cause: error })
+  }
+  try {
+    await updateDoc(gameRef, { lastActivityAt: Date.now() })
+  } catch (error) {
+    console.warn("[bridge:save-result-heartbeat]", error)
   }
 }
 
@@ -221,12 +228,13 @@ export async function fetchGame(gameId: string): Promise<StoredGame | null> {
 
 export type ResultsView =
   | { viewer: "director-or-finished" }
-  | { viewer: "table"; table: number }
+  | { viewer: "pair"; pairNumber: string }
 
 /**
- * Table devices may only fetch their own rows while the game is live, so the
- * query must carry the matching filter. Results are sorted client-side to keep
- * Firestore free of composite indexes.
+ * Pairs may only fetch rows they participate in while the game is live, so the
+ * queries carry matching filters. Howell pairs play both sides across rounds
+ * and need two single-field queries merged client-side (no composite index).
+ * Results are sorted client-side to keep Firestore free of composite indexes.
  */
 export async function fetchResults(
   gameId: string,
@@ -234,17 +242,51 @@ export async function fetchResults(
   game: StoredGame,
 ): Promise<StoredResult[]> {
   const db = await getDb()
-  const field = game.movement === "howell" ? "table" : "nsPairIndex"
-  const value = view.viewer === "table"
-    ? (game.movement === "howell" ? view.table : view.table - 1)
-    : null
   const resultsRef = collection(db, "games", gameId, "results")
-  const snapshot = value === null ? await getDocs(resultsRef) : await getDocs(query(resultsRef, where(field, "==", value)))
+  if (view.viewer === "director-or-finished") {
+    const snapshot = await getDocs(resultsRef)
+    return sortedResults(snapshot, game)
+  }
+  const indices = pairIndicesForNumber(game, view.pairNumber)
+  if (!indices) return []
+  const queries =
+    game.movement === "howell"
+      ? [
+          query(resultsRef, where("nsPairIndex", "==", Number(view.pairNumber) - 1)),
+          query(resultsRef, where("ewPairIndex", "==", Number(view.pairNumber) - 1)),
+        ]
+      : indices.nsPairIndex >= 0
+        ? [query(resultsRef, where("nsPairIndex", "==", indices.nsPairIndex))]
+        : [query(resultsRef, where("ewPairIndex", "==", indices.ewPairIndex))]
+  const seen = new Map<string, StoredResult>()
+  for (const resultsQuery of queries) {
+    const snapshot = await getDocs(resultsQuery)
+    for (const entry of parseSnapshots(snapshot, game)) {
+      seen.set(`${entry.boardNumber}-ns-${entry.nsPairIndex}`, entry)
+    }
+  }
+  return [...seen.values()].sort((left, right) =>
+    left.boardNumber - right.boardNumber || left.nsPairIndex - right.nsPairIndex,
+  )
+}
+
+function parseSnapshots(
+  snapshot: { forEach: (callback: (entry: { data: () => unknown }) => void) => void },
+  game: StoredGame,
+): StoredResult[] {
   const results: StoredResult[] = []
   snapshot.forEach((entry) => {
     const parsed = parseStoredResult(entry.data(), game)
     if (parsed) results.push(parsed)
   })
+  return results
+}
+
+function sortedResults(
+  snapshot: { forEach: (callback: (entry: { data: () => unknown }) => void) => void },
+  game: StoredGame,
+): StoredResult[] {
+  const results = parseSnapshots(snapshot, game)
   results.sort((left, right) =>
     left.boardNumber - right.boardNumber || left.nsPairIndex - right.nsPairIndex,
   )

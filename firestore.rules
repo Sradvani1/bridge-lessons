@@ -65,16 +65,29 @@ service cloud.firestore {
       function isDirector() {
         return signedIn() && request.auth.uid == gameData().directorUid;
       }
-      function ownsTable() {
-        return signedIn() && ((('1' in gameData().tables.keys()) && gameData().tables['1'] == request.auth.uid)
-          || (('2' in gameData().tables.keys()) && gameData().tables['2'] == request.auth.uid)
-          || (('3' in gameData().tables.keys()) && gameData().tables['3'] == request.auth.uid));
+      // Printed pair numbers ("1".."N"). Mitchell P1-3 are North-South 1-3
+      // and P4-6 are East-West 1-3; Howell Pn is pair index n-1 playing both
+      // sides by round. Keep in sync with pairListForGame/pairIndicesForNumber
+      // in lib/game-data.ts (the rules engine cannot share that code).
+      function myPair() {
+        return !signedIn() ? ""
+          : !(('pairClaims' in gameData().keys())) ? ""
+          : (('1' in gameData().pairClaims.keys()) && gameData().pairClaims['1'] == request.auth.uid) ? '1'
+          : (('2' in gameData().pairClaims.keys()) && gameData().pairClaims['2'] == request.auth.uid) ? '2'
+          : (('3' in gameData().pairClaims.keys()) && gameData().pairClaims['3'] == request.auth.uid) ? '3'
+          : (('4' in gameData().pairClaims.keys()) && gameData().pairClaims['4'] == request.auth.uid) ? '4'
+          : (('5' in gameData().pairClaims.keys()) && gameData().pairClaims['5'] == request.auth.uid) ? '5'
+          : (('6' in gameData().pairClaims.keys()) && gameData().pairClaims['6'] == request.auth.uid) ? '6'
+          : "";
+      }
+      function ownsPair() {
+        return myPair() != "";
       }
 
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['status', 'movement', 'tableCount', 'pairs', 'directorUid', 'tables', 'resultCount', 'createdAt', 'lastActivityAt'])
+        && request.resource.data.keys().hasOnly(['status', 'movement', 'tableCount', 'pairs', 'directorUid', 'pairClaims', 'resultCount', 'createdAt', 'lastActivityAt'])
         && request.resource.data.status == 'playing'
         && request.resource.data.directorUid == request.auth.uid
         && request.resource.data.directorUid is string && request.resource.data.directorUid.size() <= 64
@@ -101,50 +114,62 @@ service cloud.firestore {
             && request.resource.data.pairs.ew[0] is string && request.resource.data.pairs.ew[0].size() >= 1 && request.resource.data.pairs.ew[0].size() <= 60
             && request.resource.data.pairs.ew[1] is string && request.resource.data.pairs.ew[1].size() >= 1 && request.resource.data.pairs.ew[1].size() <= 60
             && request.resource.data.pairs.ew[2] is string && request.resource.data.pairs.ew[2].size() >= 1 && request.resource.data.pairs.ew[2].size() <= 60))
-        && request.resource.data.tables is map
-        && request.resource.data.tables.keys().size() == 0
+        && request.resource.data.pairClaims is map
+        && request.resource.data.pairClaims.keys().size() == 0
         && request.resource.data.resultCount == 0
         && request.resource.data.createdAt is int
         && currentTimestamp(request.resource.data.lastActivityAt)
         && request.resource.data.lastActivityAt == request.resource.data.createdAt
         && getAfter(activeGamePath()).data.gameId == gameId
         && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
-      function validTableClaim() {
+      function validPairClaim() {
         return gameData().status == 'playing'
           && validActivityUpdate()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tables', 'lastActivityAt'])
-          && ((!('movement' in gameData().keys()) || gameData().movement != 'howell') && request.resource.data.tables.keys().hasOnly(['1', '2', '3'])
-            || (gameData().movement == 'howell' && gameData().tableCount == 2 && request.resource.data.tables.keys().hasOnly(['1', '2']))
-            || (gameData().movement == 'howell' && gameData().tableCount == 3 && request.resource.data.tables.keys().hasOnly(['1', '2', '3'])))
-          && !((('1' in gameData().tables.keys()) && gameData().tables['1'] == request.auth.uid)
-            || (('2' in gameData().tables.keys()) && gameData().tables['2'] == request.auth.uid)
-            || (('3' in gameData().tables.keys()) && gameData().tables['3'] == request.auth.uid))
-          && ((request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['1'])
-                && !('1' in gameData().tables.keys())
-                && request.resource.data.tables['1'] == request.auth.uid)
-            || (request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['2'])
-                && !('2' in gameData().tables.keys())
-                && request.resource.data.tables['2'] == request.auth.uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pairClaims', 'lastActivityAt'])
+          && request.resource.data.pairClaims.keys().hasOnly(['1', '2', '3', '4', '5', '6'])
+          && myPair() == ""
+          && ((request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['1'])
+                && !('1' in gameData().pairClaims.keys())
+                && request.resource.data.pairClaims['1'] == request.auth.uid)
+            || (request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['2'])
+                && !('2' in gameData().pairClaims.keys())
+                && request.resource.data.pairClaims['2'] == request.auth.uid)
+            || (request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['3'])
+                && !('3' in gameData().pairClaims.keys())
+                && request.resource.data.pairClaims['3'] == request.auth.uid)
+            || (request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['4'])
+                && !('4' in gameData().pairClaims.keys())
+                && request.resource.data.pairClaims['4'] == request.auth.uid)
             || (((!('movement' in gameData().keys()) || gameData().movement != 'howell') || gameData().tableCount == 3)
-                && request.resource.data.tables.diff(gameData().tables).affectedKeys().hasOnly(['3'])
-                && !('3' in gameData().tables.keys())
-                && request.resource.data.tables['3'] == request.auth.uid));
+                && request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['5'])
+                && !('5' in gameData().pairClaims.keys())
+                && request.resource.data.pairClaims['5'] == request.auth.uid)
+            || (((!('movement' in gameData().keys()) || gameData().movement != 'howell') || gameData().tableCount == 3)
+                && request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['6'])
+                && !('6' in gameData().pairClaims.keys())
+                && request.resource.data.pairClaims['6'] == request.auth.uid));
       }
-      function validDirectorTableRelease() {
-        return isDirector()
-          && gameData().status == 'playing'
+      function validPairRelease() {
+        return gameData().status == 'playing'
           && validActivityUpdate()
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['tables', 'lastActivityAt'])
-          && request.resource.data.tables.diff(gameData().tables).addedKeys().size() == 0
-          && request.resource.data.tables.diff(gameData().tables).changedKeys().size() == 0
-          && request.resource.data.tables.diff(gameData().tables).removedKeys().hasOnly(['1', '2', '3']);
+          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['pairClaims', 'lastActivityAt'])
+          && request.resource.data.pairClaims.diff(gameData().pairClaims).addedKeys().size() == 0
+          && request.resource.data.pairClaims.diff(gameData().pairClaims).changedKeys().size() == 0
+          && request.resource.data.pairClaims.diff(gameData().pairClaims).removedKeys().hasOnly(['1', '2', '3', '4', '5', '6'])
+          && request.resource.data.pairClaims.diff(gameData().pairClaims).removedKeys().size() >= 1
+          && (isDirector() || ownPairRelease());
+      }
+      function ownPairRelease() {
+        return signedIn() && myPair() != ""
+          && !(myPair() in request.resource.data.pairClaims.keys())
+          && request.resource.data.pairClaims.diff(gameData().pairClaims).removedKeys().size() == 1;
       }
       function validActivityUpdate() {
         return currentTimestamp(request.resource.data.lastActivityAt)
           && (!('lastActivityAt' in gameData().keys()) || request.resource.data.lastActivityAt >= gameData().lastActivityAt);
       }
       function validDirectorActivityUpdate() {
-        return (isDirector() || ownsTable())
+        return (isDirector() || ownsPair())
           && gameData().status == 'playing'
           && validActivityUpdate()
           && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['lastActivityAt']);
@@ -166,13 +191,15 @@ service cloud.firestore {
           && existsAfter(activeGamePath())
           && getAfter(activeGamePath()).data.gameId != gameId;
       }
-      // Table claims are immutable per device. Finishing or cancelling clears the active-game lock.
+      // Pair claims stick to people, not furniture. Finishing or cancelling clears the active-game lock.
+      // The activity heartbeat is first: it is the hottest path and fails fast
+      // for every other update shape, keeping batched scorer writes in budget.
       allow update: if signedIn() && (
-        validDirectorTableRelease()
+        validDirectorActivityUpdate()
+        || validPairRelease()
+        || validPairClaim()
         || validGameClosure()
         || validStaleGameCancellation()
-        || validDirectorActivityUpdate()
-        || validTableClaim()
       );
       allow delete: if false;
 
@@ -180,31 +207,55 @@ service cloud.firestore {
         function live() {
           return get(/databases/$(database)/documents/games/$(gameId)).data;
         }
-        function myTable() {
-          return !signedIn() ? 0
-            : (('1' in live().tables.keys()) && live().tables['1'] == request.auth.uid) ? 1
-            : (('2' in live().tables.keys()) && live().tables['2'] == request.auth.uid) ? 2
-            : (('3' in live().tables.keys()) && live().tables['3'] == request.auth.uid) ? 3
-            : 0;
+      // Same pair-number mapping as the game-document myPair() above.
+      function myPair() {
+          return !signedIn() ? ""
+            : !(('pairClaims' in live().keys())) ? ""
+            : (('1' in live().pairClaims.keys()) && live().pairClaims['1'] == request.auth.uid) ? '1'
+            : (('2' in live().pairClaims.keys()) && live().pairClaims['2'] == request.auth.uid) ? '2'
+            : (('3' in live().pairClaims.keys()) && live().pairClaims['3'] == request.auth.uid) ? '3'
+            : (('4' in live().pairClaims.keys()) && live().pairClaims['4'] == request.auth.uid) ? '4'
+            : (('5' in live().pairClaims.keys()) && live().pairClaims['5'] == request.auth.uid) ? '5'
+            : (('6' in live().pairClaims.keys()) && live().pairClaims['6'] == request.auth.uid) ? '6'
+            : "";
         }
         function isHowell() {
           return 'movement' in live().keys() && live().movement == 'howell';
         }
+        // Pairs see only rows they play in. Mitchell pairs are NS- or EW-only
+        // (P1-3 = NS 1-3, P4-6 = EW 1-3); Howell pairs play both sides by round.
+        // The pair number is bound once per check: re-evaluating the lookup in
+        // every branch exceeds the per-request expression budget.
+        function participatesIn(entry, pair) {
+          return !isHowell()
+            ? (pair == '1' && entry.nsPairIndex == 0)
+              || (pair == '2' && entry.nsPairIndex == 1)
+              || (pair == '3' && entry.nsPairIndex == 2)
+              || (pair == '4' && entry.ewPairIndex == 0)
+              || (pair == '5' && entry.ewPairIndex == 1)
+              || (pair == '6' && entry.ewPairIndex == 2)
+            : (pair == '1' && (entry.nsPairIndex == 0 || entry.ewPairIndex == 0))
+              || (pair == '2' && (entry.nsPairIndex == 1 || entry.ewPairIndex == 1))
+              || (pair == '3' && (entry.nsPairIndex == 2 || entry.ewPairIndex == 2))
+              || (pair == '4' && (entry.nsPairIndex == 3 || entry.ewPairIndex == 3))
+              || (pair == '5' && (entry.nsPairIndex == 4 || entry.ewPairIndex == 4))
+              || (pair == '6' && (entry.nsPairIndex == 5 || entry.ewPairIndex == 5));
+        }
         function readsOwnResult() {
-          // saveResult reads a board before creating it, so claimed tables need
+          // saveResult reads a board before creating it, so claimed pairs need
           // access to an empty result document as well as their own live rows.
+          let pair = myPair();
           return resource == null
-            ? myTable() > 0
-            : (!isHowell()
-              ? myTable() == resource.data.nsPairIndex + 1
-              : myTable() == resource.data.table);
+            ? pair != ""
+            : participatesIn(resource.data, pair);
         }
         function writesOwnResult() {
-          return myTable() > 0
+          let pair = myPair();
+          return pair != ""
             && live().status == 'playing'
             && request.resource.data.kind != 'manual'
             && validResult()
-            && request.resource.data.table == myTable()
+            && participatesIn(request.resource.data, pair)
             && request.resource.data.updatedBy == request.auth.uid
             && resultId == 'board-' + string(request.resource.data.boardNumber) + '-ns-'
                 + string(request.resource.data.nsPairIndex);
@@ -212,13 +263,26 @@ service cloud.firestore {
         function correctMovement() {
           return isHowell() ? correctHowellFormula() && correctHowellBoards() : correctMitchellMovement();
         }
+        // Dispatched on table count so each write evaluates only its own
+        // schedule. Evaluating both blobs every write breaks the per-request
+        // expression budget on three-table games.
         function correctHowellFormula() {
-          return (live().tableCount == 2 && ((request.resource.data.table == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == request.resource.data.round + 1) || (request.resource.data.table == 2 && ((request.resource.data.round == 0 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 1 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 2 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2)))))
-            || (live().tableCount == 3 && ((request.resource.data.table == 1 && request.resource.data.nsPairIndex == 5 && request.resource.data.ewPairIndex == request.resource.data.round) || (request.resource.data.table == 2 && request.resource.data.nsPairIndex == (request.resource.data.round + 2) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 3) % 5) || (request.resource.data.table == 3 && request.resource.data.nsPairIndex == (request.resource.data.round + 4) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 1) % 5)));
+          return live().tableCount == 2 ? howellFormula2() : howellFormula3();
+        }
+        function howellFormula2() {
+          return (request.resource.data.table == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == request.resource.data.round + 1) || (request.resource.data.table == 2 && ((request.resource.data.round == 0 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 1 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 2 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2)));
+        }
+        function howellFormula3() {
+          return (request.resource.data.table == 1 && request.resource.data.nsPairIndex == 5 && request.resource.data.ewPairIndex == request.resource.data.round) || (request.resource.data.table == 2 && request.resource.data.nsPairIndex == (request.resource.data.round + 2) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 3) % 5) || (request.resource.data.table == 3 && request.resource.data.nsPairIndex == (request.resource.data.round + 4) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 1) % 5);
         }
         function correctHowellBoards() {
-          return (live().tableCount == 2 && ((request.resource.data.round == 0 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12)))
-            || (live().tableCount == 3 && ((request.resource.data.table == 1 && request.resource.data.boardNumber >= request.resource.data.round * 3 + 1 && request.resource.data.boardNumber <= request.resource.data.round * 3 + 3) || (request.resource.data.table == 2 && ((request.resource.data.round < 4 && request.resource.data.boardNumber >= 4 + (request.resource.data.round % 2) * 3 && request.resource.data.boardNumber <= 6 + (request.resource.data.round % 2) * 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15))) || (request.resource.data.table == 3 && ((request.resource.data.round < 2 && request.resource.data.boardNumber >= 10 && request.resource.data.boardNumber <= 12) || (request.resource.data.round >= 2 && request.resource.data.round < 4 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15)))));
+          return live().tableCount == 2 ? howellBoards2() : howellBoards3();
+        }
+        function howellBoards2() {
+          return (request.resource.data.round == 0 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12);
+        }
+        function howellBoards3() {
+          return (request.resource.data.table == 1 && request.resource.data.boardNumber >= request.resource.data.round * 3 + 1 && request.resource.data.boardNumber <= request.resource.data.round * 3 + 3) || (request.resource.data.table == 2 && ((request.resource.data.round < 4 && request.resource.data.boardNumber >= 4 + (request.resource.data.round % 2) * 3 && request.resource.data.boardNumber <= 6 + (request.resource.data.round % 2) * 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15))) || (request.resource.data.table == 3 && ((request.resource.data.round < 2 && request.resource.data.boardNumber >= 10 && request.resource.data.boardNumber <= 12) || (request.resource.data.round >= 2 && request.resource.data.round < 4 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15)));
         }
         function correctHowellPairs() {
           return (live().tableCount == 2 && ((request.resource.data.table == 1 && request.resource.data.round == 0 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 3) || (request.resource.data.table == 2 && request.resource.data.round == 0 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2) || (request.resource.data.table == 1 && request.resource.data.round == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 2) || (request.resource.data.table == 2 && request.resource.data.round == 1 && request.resource.data.nsPairIndex == 3 && request.resource.data.ewPairIndex == 1) || (request.resource.data.table == 1 && request.resource.data.round == 2 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == 1) || (request.resource.data.table == 2 && request.resource.data.round == 2 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3)))
@@ -259,7 +323,7 @@ service cloud.firestore {
             + string(request.resource.data.nsPairIndex);
         }
 
-        // Director: live corrections. Everyone: after reveal. Tables: their own rows until then.
+        // Director: live corrections. Everyone: after reveal. Pairs: rows they play in until then.
         allow read: if signedIn() && (
           request.auth.uid == live().directorUid
           || live().status == 'finished'

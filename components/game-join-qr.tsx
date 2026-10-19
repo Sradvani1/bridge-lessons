@@ -7,6 +7,6 @@ export default function GameJoinQr({ gameId }: { gameId: string }) {
 
   return <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
     <QRCodeSVG value={joinUrl} size={180} level="M" includeMargin className="rounded-lg bg-white p-2" />
-    <div className="text-center sm:text-left"><h2 className="text-xl font-bold text-[#123a28]">Table Join QR Code</h2><p className="mt-1 max-w-sm text-[#52615a]">Have each scorekeeper scan this with their phone camera. It opens this game directly, ready to choose an available table.</p></div>
+    <div className="text-center sm:text-left"><h2 className="text-xl font-bold text-[#123a28]">Pair Join QR Code</h2><p className="mt-1 max-w-sm text-[#52615a]">Have each pair scan this with their phone camera. It opens this game directly, ready to claim their pair names. One phone per pair — take it along each round.</p></div>
   </div>
 }
