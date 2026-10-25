@@ -535,11 +535,35 @@ test("rehearses scorer saves and director finish for every movement", async () =
     const pairs = Array.from({ length: pairCount }, (_, index) => environment.authenticatedContext(`full-${movement.name}-${index + 1}`).firestore())
     for (const [index, pairFirestore] of pairs.entries()) await assertSucceeds(updateDoc(doc(pairFirestore, "games", gameId), { [`pairClaims.${index + 1}`]: `full-${movement.name}-${index + 1}`, lastActivityAt: Date.now() }))
 
+    // East-West phones file their own away-table boards; other pairs' boards stay private.
+    const ewFiledIds = new Set<string>()
+    const ewCheck = movement.name.startsWith("mitchell")
+      ? (() => {
+          const own = movement.assignments.find((assignment) => assignment.ewPairIndex === 0)
+          const foreign = movement.assignments.find((assignment) => assignment.ewPairIndex !== 0)
+          assert.ok(own && foreign)
+          return { own, foreign }
+        })()
+      : null
+    if (ewCheck) {
+      const ewPairNumber = movement.tableCount + 1
+      const ew = pairs[ewPairNumber - 1]
+      const ewUid = `full-${movement.name}-${ewPairNumber}`
+      const ownBoard = ewCheck.own.boardNumbers[0]
+      const ownId = `board-${ownBoard}-ns-${ewCheck.own.nsPairIndex}`
+      await assertSucceeds(setDoc(doc(ew, "games", gameId, "results", ownId), result({ boardNumber: ownBoard, round: ewCheck.own.round, table: ewCheck.own.table, nsPairIndex: ewCheck.own.nsPairIndex, ewPairIndex: 0, kind: "contract", level: 1, strain: "NT", doubling: "none", declarer: "ns", tricks: 7, updatedBy: ewUid, updatedAt: Date.now() })))
+      ewFiledIds.add(ownId)
+      // A valid slot this pair never plays: creation is refused even though the movement is valid.
+      const foreignBoard = ewCheck.foreign.boardNumbers[0]
+      await assertFails(setDoc(doc(ew, "games", gameId, "results", `board-${foreignBoard}-ns-${ewCheck.foreign.nsPairIndex}`), result({ boardNumber: foreignBoard, round: ewCheck.foreign.round, table: ewCheck.foreign.table, nsPairIndex: ewCheck.foreign.nsPairIndex, ewPairIndex: ewCheck.foreign.ewPairIndex, kind: "contract", level: 1, strain: "NT", doubling: "none", declarer: "ns", tricks: 7, updatedBy: ewUid, updatedAt: Date.now() })))
+    }
+
     for (const assignment of movement.assignments) for (const boardNumber of assignment.boardNumbers) {
       // The North-South phone at each table files the board.
       const scorer = pairs[assignment.nsPairIndex]
       const scorerUid = `full-${movement.name}-${assignment.nsPairIndex + 1}`
       const resultRef = doc(scorer, "games", gameId, "results", `board-${boardNumber}-ns-${assignment.nsPairIndex}`)
+      if (ewFiledIds.has(resultRef.id)) continue
       const gameRef = doc(scorer, "games", gameId)
       try {
         await assertSucceeds(setDoc(resultRef, result({ boardNumber, round: assignment.round, table: assignment.table, nsPairIndex: assignment.nsPairIndex, ewPairIndex: assignment.ewPairIndex, kind: "contract", level: 1, strain: "NT", doubling: "none", declarer: "ns", tricks: 7, updatedBy: scorerUid, updatedAt: Date.now() })))
@@ -547,6 +571,15 @@ test("rehearses scorer saves and director finish for every movement", async () =
       } catch (error) {
         throw new Error(`${movement.name}, table ${assignment.table}, round ${assignment.round + 1}, board ${boardNumber}: ${error instanceof Error ? error.message : String(error)}`)
       }
+    }
+
+    if (ewCheck) {
+      // While the game is live, the East-West phone reads its own filed board but not a foreign one.
+      const ew = pairs[movement.tableCount]
+      const ownBoard = ewCheck.own.boardNumbers[0]
+      await assertSucceeds(getDoc(doc(ew, "games", gameId, "results", `board-${ownBoard}-ns-${ewCheck.own.nsPairIndex}`)))
+      const foreignBoard = ewCheck.foreign.boardNumbers[0]
+      await assertFails(getDoc(doc(ew, "games", gameId, "results", `board-${foreignBoard}-ns-${ewCheck.foreign.nsPairIndex}`)))
     }
 
     const director = environment.authenticatedContext("director").firestore()
