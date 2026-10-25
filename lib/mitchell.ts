@@ -1,11 +1,38 @@
 import type { BoardVulnerability } from "./bridge-scoring"
 
-export const TABLE_COUNT = 3
-export const ROUND_COUNT = 3
-export const BOARDS_PER_ROUND = 4
-export const BOARD_COUNT = ROUND_COUNT * BOARDS_PER_ROUND
-export const MAX_BOARD_MATCHPOINTS = (TABLE_COUNT - 1) * 2
-export const MAX_TOTAL_MATCHPOINTS = BOARD_COUNT * MAX_BOARD_MATCHPOINTS
+export type MitchellTableCount = 2 | 3 | 4
+export type MitchellBoardsPerRound = 3 | 4
+
+export function isMitchellTableCount(value: number): value is MitchellTableCount {
+  return value === 2 || value === 3 || value === 4
+}
+
+export function isMitchellBoardsPerRound(value: number): value is MitchellBoardsPerRound {
+  return value === 3 || value === 4
+}
+
+/** Rounds equal tables in a full Mitchell movement. */
+export function mitchellRoundCount(tableCount: MitchellTableCount): number {
+  return tableCount
+}
+
+/** Distinct boards in play: every table-round group contributes boardsPerRound boards. */
+export function mitchellBoardCount(tableCount: MitchellTableCount, boardsPerRound: MitchellBoardsPerRound): number {
+  return tableCount * boardsPerRound
+}
+
+/** One filed result per table per round per board. */
+export function mitchellResultCount(tableCount: MitchellTableCount, boardsPerRound: MitchellBoardsPerRound): number {
+  return tableCount * tableCount * boardsPerRound
+}
+
+export function mitchellMaxBoardMatchpoints(tableCount: MitchellTableCount): number {
+  return (tableCount - 1) * 2
+}
+
+export function mitchellMaxTotalMatchpoints(tableCount: MitchellTableCount, boardsPerRound: MitchellBoardsPerRound): number {
+  return mitchellBoardCount(tableCount, boardsPerRound) * mitchellMaxBoardMatchpoints(tableCount)
+}
 
 const VULNERABILITY_CYCLE: BoardVulnerability[] = [
   "none", "ns", "ew", "both",
@@ -30,33 +57,40 @@ export function boardDealer(boardNumber: number): Dealer | null {
   return isScoringBoardNumber(boardNumber) ? DEALER_CYCLE[(boardNumber - 1) % DEALER_CYCLE.length] : null
 }
 
-export type TableNumber = 1 | 2 | 3
-export type RoundIndex = 0 | 1 | 2
+export type TableNumber = 1 | 2 | 3 | 4
+export type RoundIndex = 0 | 1 | 2 | 3
 
-export function isTableNumber(value: number): value is TableNumber {
-  return Number.isInteger(value) && value >= 1 && value <= TABLE_COUNT
+export function isTableNumber(value: number, tableCount: MitchellTableCount = 3): value is TableNumber {
+  return Number.isInteger(value) && value >= 1 && value <= tableCount
 }
 
-export function isRoundIndex(value: number): value is RoundIndex {
-  return Number.isInteger(value) && value >= 0 && value < ROUND_COUNT
+export function isRoundIndex(value: number, roundCount: number = 3): value is RoundIndex {
+  return Number.isInteger(value) && value >= 0 && value < roundCount
 }
 
-function wrap3(value: number): number {
-  return ((value % TABLE_COUNT) + TABLE_COUNT) % TABLE_COUNT
+function wrap(value: number, mod: number): number {
+  return ((value % mod) + mod) % mod
 }
 
-export function eastWestPairAt(table: TableNumber, round: RoundIndex): number {
-  return wrap3(table - round - 1) + 1
+/** 1-based East-West pair number seated at a table in a round. */
+export function eastWestPairAt(table: TableNumber, round: RoundIndex, tableCount: MitchellTableCount = 3): number {
+  return wrap(table - round - 1, tableCount) + 1
 }
 
 export function northSouthPairAt(table: TableNumber): number {
   return table
 }
 
-export function boardNumbersAt(table: TableNumber, round: RoundIndex): number[] {
-  const group = wrap3(table + round - 1)
-  const first = group * BOARDS_PER_ROUND + 1
-  return Array.from({ length: BOARDS_PER_ROUND }, (_, i) => first + i)
+/** Boards played at a table in a round. Groups rotate so every board is played once per round. */
+export function boardNumbersAt(
+  table: TableNumber,
+  round: RoundIndex,
+  tableCount: MitchellTableCount = 3,
+  boardsPerRound: MitchellBoardsPerRound = 4,
+): number[] {
+  const group = wrap(table + round - 1, tableCount)
+  const first = group * boardsPerRound + 1
+  return Array.from({ length: boardsPerRound }, (_, i) => first + i)
 }
 
 export type GameStatus = "playing" | "finished" | "cancelled"

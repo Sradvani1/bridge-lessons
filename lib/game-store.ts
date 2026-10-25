@@ -14,12 +14,14 @@ import { getDb, requireUserId } from "./firebase"
 import {
   parseStoredGame,
   parseStoredResult,
+  mitchellResultCountForGame,
   pairIndicesForNumber,
   resultDocumentId,
   type StoredGame,
   type StoredResult,
 } from "./game-data"
 import { howellResultCount, type HowellTableCount } from "./howell"
+import type { MitchellBoardsPerRound, MitchellTableCount } from "./mitchell"
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 const CODE_LENGTH = 6
@@ -59,7 +61,7 @@ function generateCode(): string {
 }
 
 export type NewGame =
-  | { movement: "mitchell"; pairs: { ns: string[]; ew: string[] } }
+  | { movement: "mitchell"; tableCount: MitchellTableCount; boardsPerRound: MitchellBoardsPerRound; pairs: { ns: string[]; ew: string[] } }
   | { movement: "howell"; tableCount: HowellTableCount; pairs: string[] }
 
 export async function createGame(game: NewGame): Promise<{ gameId: string; code: string }> {
@@ -145,7 +147,7 @@ export async function finishGame(gameId: string): Promise<void> {
     const gameRef = doc(db, "games", gameId)
     const gameSnapshot = await getDoc(gameRef)
     const game = parseStoredGame(gameSnapshot.data())
-    const expectedResultCount = game?.movement === "howell" ? howellResultCount(game.tableCount) : 36
+    const expectedResultCount = game?.movement === "howell" ? howellResultCount(game.tableCount) : game ? mitchellResultCountForGame(game) : 36
     const resultSnapshots = await getDocs(collection(db, "games", gameId, "results"))
     if (!game || resultSnapshots.size !== expectedResultCount || resultSnapshots.docs.some((result) => !parseStoredResult(result.data(), game))) {
       throw new GameStoreError(`Enter all ${expectedResultCount} valid results before revealing the game.`)

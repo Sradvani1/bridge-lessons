@@ -1,5 +1,5 @@
 import { competitionRanks, rankBoardResults, type BoardResult } from "./bridge-scoring"
-import { MAX_TOTAL_MATCHPOINTS } from "./mitchell"
+import { mitchellMaxTotalMatchpoints, type MitchellBoardsPerRound, type MitchellTableCount } from "./mitchell"
 import { howellBoardCount, type HowellTableCount } from "./howell"
 import { deriveNsScore, type StoredResult } from "./game-data"
 
@@ -16,10 +16,8 @@ export type Standings = {
   ew: StandingsRow[]
 }
 
-const PAIR_COUNT = 3
-
-function zeros(): number[] {
-  return [0, 0, 0]
+function zeros(count: number): number[] {
+  return Array.from({ length: count }, () => 0)
 }
 
 function matchpointsByPair(entries: readonly { pairIndex: number; score: number }[]): Map<number, number> {
@@ -58,10 +56,11 @@ export function computeStandings(
     else byBoard.set(result.boardNumber, [result])
   }
 
-  const nsTotals = zeros()
-  const ewTotals = zeros()
-  const nsPlayed = zeros()
-  const ewPlayed = zeros()
+  const pairCount = pairs.ns.length
+  const nsTotals = zeros(pairCount)
+  const ewTotals = zeros(pairCount)
+  const nsPlayed = zeros(pairCount)
+  const ewPlayed = zeros(pairCount)
 
   for (const boardResults of byBoard.values()) {
     const nsEntries = boardResults.flatMap((result) => {
@@ -89,8 +88,12 @@ export function computeStandings(
   }
 }
 
-export function matchpointPercentage(totalMatchpoints: number): number {
-  return Math.round((totalMatchpoints / MAX_TOTAL_MATCHPOINTS) * 1000) / 10
+export function matchpointPercentage(
+  totalMatchpoints: number,
+  tableCount: MitchellTableCount = 3,
+  boardsPerRound: MitchellBoardsPerRound = 4,
+): number {
+  return Math.round((totalMatchpoints / mitchellMaxTotalMatchpoints(tableCount, boardsPerRound)) * 1000) / 10
 }
 
 export function computeHowellStandings(results: readonly StoredResult[], pairs: readonly string[]): StandingsRow[] {
@@ -126,4 +129,3 @@ export function howellMatchpointPercentage(totalMatchpoints: number, tableCount:
   return Math.round((totalMatchpoints / maximum) * 1000) / 10
 }
 
-export const TOTAL_PAIR_COUNT = PAIR_COUNT

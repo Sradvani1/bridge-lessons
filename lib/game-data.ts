@@ -1,6 +1,6 @@
 import { calculateDuplicateScore, type DeclarerSide, type Doubling, type Strain } from "./bridge-scoring"
 import { howellAssignmentAt, howellAssignments, howellBoardCount, howellPairCount, howellRoundCount, isHowellAssignment, isHowellTableCount, type HowellTableCount } from "./howell"
-import { boardNumbersAt, boardVulnerability, eastWestPairAt, isRoundIndex, isTableNumber, type GameStatus } from "./mitchell"
+import { boardNumbersAt, boardVulnerability, eastWestPairAt, isMitchellBoardsPerRound, isMitchellTableCount, isRoundIndex, isTableNumber, mitchellBoardCount, mitchellResultCount, mitchellRoundCount, type GameStatus, type MitchellBoardsPerRound, type MitchellTableCount } from "./mitchell"
 
 export type ResultKind = "contract" | "passed-out" | "manual"
 
@@ -35,7 +35,7 @@ type GameBase = {
   lastActivityAt?: number
 }
 
-export type MitchellGame = GameBase & { movement?: "mitchell"; pairs: MitchellPairs }
+export type MitchellGame = GameBase & { movement?: "mitchell"; tableCount: MitchellTableCount; boardsPerRound: MitchellBoardsPerRound; pairs: MitchellPairs }
 export type HowellGame = GameBase & { movement: "howell"; tableCount: HowellTableCount; pairs: string[] }
 export type StoredGame = MitchellGame | HowellGame
 
@@ -81,8 +81,13 @@ export const PAIR_PRESETS = [
   "Milan and Dinesh",
 ]
 
+/** Expected filed results in a full Mitchell game. */
+export function mitchellResultCountForGame(game: MitchellGame): number {
+  return mitchellResultCount(game.tableCount, game.boardsPerRound)
+}
+
 export function pairCountForGame(game: StoredGame): number {
-  return game.movement === "howell" ? howellPairCount(game.tableCount) : 6
+  return game.movement === "howell" ? howellPairCount(game.tableCount) : game.tableCount * 2
 }
 
 /** Printed pair numbers "1".."N" with display labels from director-entered names. */
@@ -92,7 +97,7 @@ export function pairListForGame(game: StoredGame): { pairNumber: string; label: 
   }
   return [
     ...game.pairs.ns.map((label, index) => ({ pairNumber: String(index + 1), label })),
-    ...game.pairs.ew.map((label, index) => ({ pairNumber: String(index + 4), label })),
+    ...game.pairs.ew.map((label, index) => ({ pairNumber: String(game.tableCount + index + 1), label })),
   ]
 }
 
@@ -106,9 +111,10 @@ export function pairIndicesForNumber(
   const picker = Number(pairNumber)
   if (!Number.isInteger(picker) || picker < 1 || picker > pairCount) return null
   if (game.movement === "howell") return { nsPairIndex: picker - 1, ewPairIndex: picker - 1 }
-  return picker <= 3
+  const tableCount = game.tableCount
+  return picker <= tableCount
     ? { nsPairIndex: picker - 1, ewPairIndex: -1 }
-    : { nsPairIndex: -1, ewPairIndex: picker - 4 }
+    : { nsPairIndex: -1, ewPairIndex: picker - tableCount - 1 }
 }
 
 export function pairNumberForUid(game: StoredGame, userId: string | null): string | null {
@@ -141,20 +147,24 @@ export function assignmentForPair(game: StoredGame, pairNumber: string, round: n
     return { ...found, direction: found.nsPairIndex === pairIndex ? "ns" : "ew" }
   }
   const indices = pairIndicesForNumber(game, pairNumber)
-  if (!indices || !isRoundIndex(round)) return null
+  const tableCount = game.tableCount
+  const boardsPerRound = game.boardsPerRound
+  const roundCount = mitchellRoundCount(tableCount)
+  if (!indices || !isRoundIndex(round, roundCount)) return null
   if (indices.nsPairIndex >= 0) {
-    const table = (indices.nsPairIndex + 1) as 1 | 2 | 3
+    const table = (indices.nsPairIndex + 1) as 1 | 2 | 3 | 4
     return {
       table,
       round,
       nsPairIndex: indices.nsPairIndex,
-      ewPairIndex: eastWestPairAt(table, round) - 1,
+      ewPairIndex: eastWestPairAt(table, round, tableCount) - 1,
       direction: "ns",
-      boardNumbers: boardNumbersAt(table, round),
+      boardNumbers: boardNumbersAt(table, round, tableCount, boardsPerRound),
     }
   }
   const ewNumber = indices.ewPairIndex + 1
-  const table = ([1, 2, 3] as const).find((candidate) => eastWestPairAt(candidate, round) === ewNumber)
+  const table = Array.from({ length: tableCount }, (_, index) => (index + 1) as 1 | 2 | 3 | 4)
+    .find((candidate) => eastWestPairAt(candidate, round, tableCount) === ewNumber)
   if (!table) return null
   return {
     table,
@@ -162,14 +172,14 @@ export function assignmentForPair(game: StoredGame, pairNumber: string, round: n
     nsPairIndex: table - 1,
     ewPairIndex: indices.ewPairIndex,
     direction: "ew",
-    boardNumbers: boardNumbersAt(table, round),
+    boardNumbers: boardNumbersAt(table, round, tableCount, boardsPerRound),
   }
 }
 
 /** Boards one pair plays in a full game (used for per-pair progress). */
 export function pairBoardCount(game: StoredGame): number {
   if (game.movement === "howell") return howellBoardCount(game.tableCount)
-  return 12
+  return mitchellBoardCount(game.tableCount, game.boardsPerRound)
 }
 
 export function pairLabel(game: StoredGame, pairNumber: string): string {
@@ -206,9 +216,13 @@ export type ResultSlot = {
 export function allAssignments(game: StoredGame): ResultSlot[] {
   if (game.movement === "howell") return howellAssignments(game.tableCount).map(({ table, round, nsPairIndex, ewPairIndex, boardNumbers }) => ({ table, round, nsPairIndex, ewPairIndex, boardNumbers }))
   const slots: ResultSlot[] = []
-  for (const table of [1, 2, 3] as const) {
-    for (const round of [0, 1, 2] as const) {
-      slots.push({ table, round, nsPairIndex: table - 1, ewPairIndex: eastWestPairAt(table, round) - 1, boardNumbers: boardNumbersAt(table, round) })
+  const tableCount = game.tableCount
+  const boardsPerRound = game.boardsPerRound
+  const tables = Array.from({ length: tableCount }, (_, index) => (index + 1) as 1 | 2 | 3 | 4)
+  const rounds = Array.from({ length: mitchellRoundCount(tableCount) }, (_, index) => index as 0 | 1 | 2 | 3)
+  for (const table of tables) {
+    for (const round of rounds) {
+      slots.push({ table, round, nsPairIndex: table - 1, ewPairIndex: eastWestPairAt(table, round, tableCount) - 1, boardNumbers: boardNumbersAt(table, round, tableCount, boardsPerRound) })
     }
   }
   return slots
@@ -255,7 +269,7 @@ export function sitsOutRound(game: StoredGame, pairNumber: string, round: number
 
 /** Boards one pair must file across the game, skipping sit-out rounds. */
 export function pairExpectedBoards(game: StoredGame, pairNumber: string): number {
-  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : 3
+  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : mitchellRoundCount(game.tableCount)
   let total = 0
   for (let round = 0; round < roundCount; round += 1) {
     if (sitsOutRound(game, pairNumber, round)) continue
@@ -266,11 +280,11 @@ export function pairExpectedBoards(game: StoredGame, pairNumber: string): number
 
 /** First round with unfiled boards at a table (for director corrections). */
 export function firstIncompleteRoundForTable(game: StoredGame, table: number, results: StoredResult[]): number | null {
-  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : 3
+  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : mitchellRoundCount(game.tableCount)
   for (let round = 0; round < roundCount; round += 1) {
     const boards = game.movement === "howell"
       ? howellAssignmentAt(game.tableCount, table, round)?.boardNumbers ?? []
-      : isTableNumber(table) && isRoundIndex(round) ? boardNumbersAt(table, round) : []
+      : isTableNumber(table, game.tableCount) && isRoundIndex(round, roundCount) ? boardNumbersAt(table, round, game.tableCount, game.boardsPerRound) : []
     const nsPairIndex = game.movement === "howell"
       ? howellAssignmentAt(game.tableCount, table, round)?.nsPairIndex ?? -1
       : table - 1
@@ -286,9 +300,14 @@ export function resultDocumentId(boardNumber: number, nsPairIndex: number): stri
 export function parseStoredResult(raw: unknown, game?: StoredGame): StoredResult | null {
   if (!isRecord(raw)) return null
 
-  const tableCount = game?.movement === "howell" ? game.tableCount : 3
-  const boardNumber = intIn(raw, "boardNumber", 1, game?.movement === "howell" ? howellBoardCount(tableCount) : 12)
-  const round = intIn(raw, "round", 0, game?.movement === "howell" ? tableCount === 2 ? 2 : 4 : 2)
+  const howellGame = game?.movement === "howell" ? game : undefined
+  const mitchellGame = game !== undefined && game.movement !== "howell" ? game : undefined
+  const tableCount = howellGame?.tableCount ?? mitchellGame?.tableCount ?? 3
+  const boardsPerRound = mitchellGame?.boardsPerRound ?? 4
+  const roundMax = howellGame ? (howellGame.tableCount === 2 ? 2 : 4) : tableCount - 1
+  const boardMax = howellGame ? howellBoardCount(howellGame.tableCount) : mitchellBoardCount(tableCount, boardsPerRound)
+  const boardNumber = intIn(raw, "boardNumber", 1, boardMax)
+  const round = intIn(raw, "round", 0, roundMax)
   const table = intIn(raw, "table", 1, tableCount)
   const nsPairIndex = intIn(raw, "nsPairIndex", 0, tableCount * 2 - 1)
   const ewPairIndex = intIn(raw, "ewPairIndex", 0, tableCount * 2 - 1)
@@ -305,7 +324,11 @@ export function parseStoredResult(raw: unknown, game?: StoredGame): StoredResult
 
   const validMovement = game?.movement === "howell"
     ? isHowellAssignment(game.tableCount, table, round, nsPairIndex, ewPairIndex, boardNumber)
-    : isTableNumber(table) && isRoundIndex(round) && nsPairIndex === table - 1 && ewPairIndex === eastWestPairAt(table, round) - 1 && boardNumbersAt(table, round).includes(boardNumber)
+    : isTableNumber(table, game?.tableCount ?? 3)
+      && isRoundIndex(round, game?.tableCount ?? 3)
+      && nsPairIndex === table - 1
+      && ewPairIndex === eastWestPairAt(table, round, game?.tableCount ?? 3) - 1
+      && boardNumbersAt(table, round, game?.tableCount ?? 3, game?.boardsPerRound ?? 4).includes(boardNumber)
   if (!validMovement) {
     return null
   }
@@ -369,11 +392,16 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
   }
 
   if (movement !== undefined && movement !== "mitchell") return null
+  // Legacy games predate tableCount/boardsPerRound: default to 3 tables and 4 boards.
+  const mitchellTableCount = raw.tableCount === undefined ? 3 : raw.tableCount
+  if (typeof mitchellTableCount !== "number" || !isMitchellTableCount(mitchellTableCount)) return null
+  const mitchellBoardsPerRound = raw.boardsPerRound === undefined ? 4 : raw.boardsPerRound
+  if (typeof mitchellBoardsPerRound !== "number" || !isMitchellBoardsPerRound(mitchellBoardsPerRound)) return null
   if (!isRecord(raw.pairs)) return null
   const pairs: MitchellPairs = { ns: [], ew: [] }
   for (const direction of ["ns", "ew"] as const) {
     const list = raw.pairs[direction]
-    if (!Array.isArray(list) || list.length !== 3) return null
+    if (!Array.isArray(list) || list.length !== mitchellTableCount) return null
     for (const item of list) {
       const parsedLabel = label(item)
       if (parsedLabel === null) return null
@@ -381,11 +409,11 @@ export function parseStoredGame(raw: unknown): StoredGame | null {
     }
   }
 
-  const pairClaims = parsePairClaims(raw.pairClaims, 6)
+  const pairClaims = parsePairClaims(raw.pairClaims, mitchellTableCount * 2)
   if (!pairClaims) return null
-  const absentPairs = parseAbsentPairs(raw.absentPairs, 6)
+  const absentPairs = parseAbsentPairs(raw.absentPairs, mitchellTableCount * 2)
   if (!absentPairs) return null
-  return { status, pairs, directorUid, pairClaims, absentPairs, ...(movement === "mitchell" ? { movement } : {}), ...(lastActivityAt === undefined ? {} : { lastActivityAt }) }
+  return { status, pairs, directorUid, pairClaims, absentPairs, tableCount: mitchellTableCount, boardsPerRound: mitchellBoardsPerRound, ...(movement === "mitchell" ? { movement } : {}), ...(lastActivityAt === undefined ? {} : { lastActivityAt }) }
 }
 
 function parsePairClaims(raw: unknown, pairCount: number): Record<string, string> | null {

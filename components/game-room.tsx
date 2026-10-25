@@ -4,11 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter } from "next/navigation"
 import { rankBoardResults } from "@/lib/bridge-scoring"
-import { deriveNsScore, firstIncompleteRoundForTable, missingResultSlots, pairExpectedBoards, pairLabel, pairListForGame, pairNumberForUid, assignmentForPair, type ResultKind, type StoredGame, type StoredResult } from "@/lib/game-data"
+import { deriveNsScore, firstIncompleteRoundForTable, missingResultSlots, mitchellResultCountForGame, pairExpectedBoards, pairLabel, pairListForGame, pairNumberForUid, assignmentForPair, type ResultKind, type StoredGame, type StoredResult } from "@/lib/game-data"
 import { cancelGame, claimPair, fetchGame, fetchResult, fetchResults, finishGame, isPermissionDenied, releasePair, saveResult, type ResultInput } from "@/lib/game-store"
 import { requireUserId } from "@/lib/firebase"
 import { isOnline, OFFLINE_MESSAGE } from "@/lib/online"
-import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, type RoundIndex } from "@/lib/mitchell"
+import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, mitchellBoardCount, mitchellRoundCount, type MitchellBoardsPerRound, type MitchellTableCount, type RoundIndex } from "@/lib/mitchell"
 import { howellAssignmentAt, howellAssignments, howellBoardCount, howellResultCount, howellRoundCount } from "@/lib/howell"
 import { computeHowellStandings, computeStandings, howellMatchpointPercentage, matchpointPercentage, type StandingsRow } from "@/lib/standings"
 import ScoreGlossary from "@/components/score-glossary"
@@ -47,7 +47,7 @@ function readTableView(gameId: string): { table: number | null; round: number } 
     if (typeof parsed !== "object" || parsed === null) return fallback
     const { table, round } = parsed as { table?: unknown; round?: unknown }
     return {
-      table: typeof table === "number" && Number.isInteger(table) && table >= 1 && table <= 3 ? table : null,
+      table: typeof table === "number" && Number.isInteger(table) && table >= 1 && table <= 4 ? table : null,
       round: typeof round === "number" && Number.isInteger(round) && round >= 0 && round <= 4 ? round : 0,
     }
   } catch {
@@ -226,7 +226,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   }, [identityReady, game?.status, refresh])
 
   const claimedPair = game && userId ? pairNumberForUid(game, userId) : null
-  const roundCount = game ? (game.movement === "howell" ? howellRoundCount(game.tableCount) : 3) : 3
+  const roundCount = game ? (game.movement === "howell" ? howellRoundCount(game.tableCount) : mitchellRoundCount(game.tableCount)) : 3
   const scorerRound = !director && game && claimedPair
     ? Array.from({ length: roundCount }, (_, candidateRound) => {
       const assignment = assignmentForPair(game, claimedPair, candidateRound)
@@ -237,7 +237,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const pairAssignment = game && claimedPair ? assignmentForPair(game, claimedPair, scorerRound) : null
   const table = director ? selectedTable : pairAssignment?.table ?? null
   const howellAssignment = game?.movement === "howell" && table ? howellAssignmentAt(game.tableCount, table, scorerRound) : null
-  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, scorerRound as RoundIndex) : null
+  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3 | 4, scorerRound as RoundIndex, game?.movement === "howell" ? 3 : (game?.tableCount ?? 3)) : null
 
   useEffect(() => {
     if (claimedPair) claimedPairRef.current = claimedPair
@@ -273,7 +273,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
 
   async function finish() {
     if (!game) return
-    const expectedResultCount = game.movement === "howell" ? howellResultCount(game.tableCount) : 36
+    const expectedResultCount = game.movement === "howell" ? howellResultCount(game.tableCount) : mitchellResultCountForGame(game)
     setFinishing(true)
     try {
       // Count fresh from the server: the on-screen tally can lag by one poll.
@@ -351,8 +351,8 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const standings = game.movement === "howell" ? null : computeStandings(results, game.pairs)
   const howellStandings = game.movement === "howell" ? computeHowellStandings(results, game.pairs) : null
   const howellTableCount = game.movement === "howell" ? game.tableCount : null
-  const tableNumbers = Array.from({ length: game.movement === "howell" ? game.tableCount : 3 }, (_, index) => index + 1)
-  const expectedResultCount = game.movement === "howell" ? howellResultCount(game.tableCount) : 36
+  const tableNumbers = Array.from({ length: game.tableCount }, (_, index) => index + 1)
+  const expectedResultCount = game.movement === "howell" ? howellResultCount(game.tableCount) : mitchellResultCountForGame(game)
   const canSeeResults = director || game.status === "finished"
   const myPairTotal = claimedPair ? pairExpectedBoards(game, claimedPair) : 0
   const missingSlots = director && game.status === "playing" ? missingResultSlots(game, results) : []
@@ -413,19 +413,19 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
 
     <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5">
       <h2 className="text-2xl font-bold text-[#123a28]">Standings</h2>
-      {canSeeResults ? howellStandings && howellTableCount ? <div className="mt-4"><ScoreGlossary variant="howell" tableCount={howellTableCount} /><div className="mt-3"><StandingsTable title="Pairs" rows={howellStandings} tableCount={howellTableCount} /></div></div> : standings ? <div className="mt-4"><ScoreGlossary variant="mitchell" /><div className="mt-3 grid gap-5 md:grid-cols-2"><StandingsTable title="North-South" rows={standings.ns} /><StandingsTable title="East-West" rows={standings.ew} /></div></div> : null : <p className="mt-3 leading-7 text-[#52615a]">Scores will appear here when the director finishes and reveals the game.</p>}
+      {canSeeResults ? howellStandings && howellTableCount ? <div className="mt-4"><ScoreGlossary variant="howell" tableCount={howellTableCount} /><div className="mt-3"><StandingsTable title="Pairs" rows={howellStandings} tableCount={howellTableCount} /></div></div> : standings ? <div className="mt-4"><ScoreGlossary variant="mitchell" mitchellTableCount={game.movement === "howell" ? undefined : game.tableCount} mitchellBoardsPerRound={game.movement === "howell" ? undefined : game.boardsPerRound} /><div className="mt-3 grid gap-5 md:grid-cols-2"><StandingsTable title="North-South" rows={standings.ns} mitchellTableCount={game.movement === "howell" ? undefined : game.tableCount} mitchellBoardsPerRound={game.movement === "howell" ? undefined : game.boardsPerRound} /><StandingsTable title="East-West" rows={standings.ew} mitchellTableCount={game.movement === "howell" ? undefined : game.tableCount} mitchellBoardsPerRound={game.movement === "howell" ? undefined : game.boardsPerRound} /></div></div> : null : <p className="mt-3 leading-7 text-[#52615a]">Scores will appear here when the director finishes and reveals the game.</p>}
     </section>
 
-    {canSeeResults ? <Traveller results={results} movement={game.movement} tableCount={howellTableCount} /> : null}
+    {canSeeResults ? <Traveller results={results} movement={game.movement} tableCount={howellTableCount} mitchellTableCount={game.movement === "howell" ? undefined : game.tableCount} mitchellBoardsPerRound={game.movement === "howell" ? undefined : game.boardsPerRound} /> : null}
   </div>
 }
 
-function StandingsTable({ title, rows, tableCount }: { title: string; rows: StandingsRow[]; tableCount?: 2 | 3 }) {
-  const boardTotal = tableCount ? howellBoardCount(tableCount) : 12
+function StandingsTable({ title, rows, tableCount, mitchellTableCount, mitchellBoardsPerRound }: { title: string; rows: StandingsRow[]; tableCount?: 2 | 3; mitchellTableCount?: MitchellTableCount; mitchellBoardsPerRound?: MitchellBoardsPerRound }) {
+  const boardTotal = tableCount ? howellBoardCount(tableCount) : mitchellBoardCount(mitchellTableCount ?? 3, mitchellBoardsPerRound ?? 4)
   return <div><h3 className="font-bold text-[#173c2a]">{title}</h3><div role="table" aria-label={`${title} standings`} className="mt-2 space-y-2">
     <div role="row" className="grid grid-cols-[1fr_3rem_4.5rem_4rem] items-center gap-2 px-3 text-xs font-semibold uppercase tracking-wide text-[#52615a]"><span role="columnheader">Pair</span><span role="columnheader" className="text-right">MP</span><span role="columnheader" className="text-right">%</span><span role="columnheader" className="text-right">B</span></div>
     {[...rows].sort((left, right) => left.place - right.place || left.pairIndex - right.pairIndex).map((row) => {
-      const percent = tableCount ? howellMatchpointPercentage(row.totalMatchpoints, tableCount) : matchpointPercentage(row.totalMatchpoints)
+      const percent = tableCount ? howellMatchpointPercentage(row.totalMatchpoints, tableCount) : matchpointPercentage(row.totalMatchpoints, mitchellTableCount ?? 3, mitchellBoardsPerRound ?? 4)
       return <div role="row" key={row.pairIndex} className="grid grid-cols-[1fr_3rem_4.5rem_4rem] items-center gap-2 rounded-lg bg-[#f3f7f3] px-3 py-3"><span role="rowheader" className="min-w-0 break-words">#{row.place} {row.label || `${title} ${row.pairIndex + 1}`}</span><span role="cell" className="tabular-nums text-right font-bold">{row.totalMatchpoints}</span><span role="cell" className="tabular-nums text-right font-bold">{percent}%</span><span role="cell" className="tabular-nums text-right font-bold">{row.boardsPlayed}/{boardTotal}</span></div>
     })}
   </div></div>
@@ -436,7 +436,7 @@ function HowellMovementCard({ pairs, tableCount }: { pairs: readonly string[]; t
   return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: Boards {assignment.boardNumbers.join("-")} | {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
 }
 
-function Traveller({ results, movement, tableCount }: { results: StoredResult[]; movement?: "mitchell" | "howell"; tableCount?: 2 | 3 | null }) {
+function Traveller({ results, movement, tableCount, mitchellTableCount, mitchellBoardsPerRound }: { results: StoredResult[]; movement?: "mitchell" | "howell"; tableCount?: 2 | 3 | null; mitchellTableCount?: MitchellTableCount; mitchellBoardsPerRound?: MitchellBoardsPerRound }) {
   const byBoard = new Map<number, StoredResult[]>()
   for (const result of results) {
     if (deriveNsScore(result) === null) continue
@@ -444,7 +444,7 @@ function Traveller({ results, movement, tableCount }: { results: StoredResult[];
     rows.push(result)
     byBoard.set(result.boardNumber, rows)
   }
-  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><h2 className="text-2xl font-bold text-[#123a28]">Board Travellers</h2><ScoreGlossary variant={movement === "howell" ? "howell" : "mitchell"} tableCount={tableCount ?? undefined} /><div className="mt-4 grid gap-4 lg:grid-cols-2">
+  return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><h2 className="text-2xl font-bold text-[#123a28]">Board Travellers</h2><ScoreGlossary variant={movement === "howell" ? "howell" : "mitchell"} tableCount={tableCount ?? undefined} mitchellTableCount={mitchellTableCount} mitchellBoardsPerRound={mitchellBoardsPerRound} /><div className="mt-4 grid gap-4 lg:grid-cols-2">
     {[...byBoard.entries()].sort(([left], [right]) => left - right).map(([board, rows]) => {
       const ranked = new Map(rankBoardResults(rows.map((result) => ({ id: `${result.table}-${result.nsPairIndex}`, label: "", nsScore: deriveNsScore(result) ?? 0 }))).map((row) => [row.id, row.matchpoints]))
       return <article key={board} className="rounded-xl bg-[#f3f7f3] p-4"><h3 className="font-bold text-[#173c2a]">Board {board}</h3><p className="mt-1 text-xs font-semibold uppercase tracking-wide text-[#52615a]">North-South score | Matchpoints on this board</p><div className="mt-2 space-y-1 text-[#52615a]">{rows.sort((left, right) => left.table - right.table).map((result) => <p key={`${result.table}-${result.nsPairIndex}`}>Table {result.table}: NS {deriveNsScore(result)} <span aria-hidden="true">|</span> {ranked.get(`${result.table}-${result.nsPairIndex}`) ?? 0} MP</p>)}</div></article>
@@ -454,10 +454,10 @@ function Traveller({ results, movement, tableCount }: { results: StoredResult[];
 
 function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, onNotice, onSaved, director, locked, onBack, viewerDirection }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; onNotice: (notice: string) => void; onSaved: () => void; director: boolean; locked: boolean; onBack?: () => void; viewerDirection?: "ns" | "ew" | null }) {
   const assignment = game.movement === "howell" ? howellAssignmentAt(game.tableCount, table, round) : null
-  const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3, round as RoundIndex)
-  const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3, round as RoundIndex)
+  const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3 | 4, round as RoundIndex, game.movement === "howell" ? 3 : game.tableCount, game.movement === "howell" ? 4 : game.boardsPerRound)
+  const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3 | 4, round as RoundIndex, game.movement === "howell" ? 3 : game.tableCount)
   const nsPairIndex = assignment?.nsPairIndex ?? table - 1
-  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : 3
+  const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : mitchellRoundCount(game.tableCount)
   return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Take this phone with you. Follow the blue card for your next table." : " Take this phone with you. North-South stays put; East-West moves up one table each round."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}{!director && viewerDirection ? <p className="mt-2 text-lg font-bold text-[#123a28]">You are {viewerDirection === "ns" ? "NORTH-SOUTH" : "EAST-WEST"} this round.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div>{director ? <div className="mt-4 grid grid-cols-3 gap-2">{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div> : <p className="mt-4 font-bold text-[#173c2a]">Round {round + 1} of {roundCount}</p>}<div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} game={game} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} onNotice={onNotice} onSaved={onSaved} director={director} locked={locked} /> })}</div></section>
 }
 

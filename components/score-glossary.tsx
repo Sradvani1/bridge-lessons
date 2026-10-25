@@ -3,27 +3,38 @@
 import { useId, useState } from "react"
 
 import { howellBoardCount } from "@/lib/howell"
-import { BOARD_COUNT, MAX_BOARD_MATCHPOINTS, MAX_TOTAL_MATCHPOINTS } from "@/lib/mitchell"
+import { mitchellBoardCount, mitchellMaxBoardMatchpoints, mitchellMaxTotalMatchpoints, type MitchellBoardsPerRound, type MitchellTableCount } from "@/lib/mitchell"
 
 type Props = {
   variant: "howell" | "mitchell"
   tableCount?: 2 | 3
+  mitchellTableCount?: MitchellTableCount
+  mitchellBoardsPerRound?: MitchellBoardsPerRound
 }
 
-function maximumFor(variant: Props["variant"], tableCount?: 2 | 3): { max: number; boards: number; boardMax: number } {
+function maximumFor(
+  variant: Props["variant"],
+  tableCount?: 2 | 3,
+  mitchellTableCount: MitchellTableCount = 3,
+  mitchellBoardsPerRound: MitchellBoardsPerRound = 4,
+): { max: number; boards: number; boardMax: number } {
   if (variant === "howell") {
     const tc = tableCount ?? 3
     const boards = howellBoardCount(tc)
     const boardMax = (tc - 1) * 2
     return { max: boards * boardMax, boards, boardMax }
   }
-  return { max: MAX_TOTAL_MATCHPOINTS, boards: BOARD_COUNT, boardMax: MAX_BOARD_MATCHPOINTS }
+  return {
+    max: mitchellMaxTotalMatchpoints(mitchellTableCount, mitchellBoardsPerRound),
+    boards: mitchellBoardCount(mitchellTableCount, mitchellBoardsPerRound),
+    boardMax: mitchellMaxBoardMatchpoints(mitchellTableCount),
+  }
 }
 
-export default function ScoreGlossary({ variant, tableCount }: Props) {
+export default function ScoreGlossary({ variant, tableCount, mitchellTableCount, mitchellBoardsPerRound }: Props) {
   const [open, setOpen] = useState(false)
   const panelId = useId()
-  const { max, boards, boardMax } = maximumFor(variant, tableCount)
+  const { max, boards, boardMax } = maximumFor(variant, tableCount, mitchellTableCount, mitchellBoardsPerRound)
   const examplePercent = Math.round((7 / max) * 1000) / 10
 
   return (
@@ -42,7 +53,7 @@ export default function ScoreGlossary({ variant, tableCount }: Props) {
         <div id={panelId} className="mt-2 space-y-2 rounded-lg bg-[#f3f7f3] p-3 text-sm leading-6 text-[#52615a]">
           <p className="font-semibold text-[#173c2a]">Each row shows 3 separate numbers: matchpoints, percent, boards.</p>
           <ul className="list-disc space-y-1 pl-5">
-            <li><span className="font-semibold text-[#173c2a]">MP</span> — matchpoints earned so far. {boardMax === 2 ? "Per board: 2 for best, 0 for worst, 1 each for a tie." : "Per board: 4 for best, 2 middle, 0 worst (ties split the points)."}</li>
+            <li><span className="font-semibold text-[#173c2a]">MP</span> — matchpoints earned so far. {boardMax === 2 ? "Per board: 2 for best, 0 for worst, 1 each for a tie." : `Per board: ${boardMax} for best down to 0 for worst in steps of 2 (ties split the points).`}</li>
             <li><span className="font-semibold text-[#173c2a]">%</span> — MP divided by {max} maximum, times 100. Example in this game: 7 MP is {examplePercent}%.</li>
             <li><span className="font-semibold text-[#173c2a]">B</span> — boards entered so far, out of {boards}. Uneven counts just mean some tables are ahead.</li>
             <li><span className="font-semibold text-[#173c2a]"># place</span> — shared places skip numbers, so #1, #1, #3 means a two-way tie for first.</li>

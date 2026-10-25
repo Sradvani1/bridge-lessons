@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { after, afterEach, before, test } from "node:test"
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing"
 import { collection, deleteField, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
-import { boardNumbersAt, eastWestPairAt } from "../lib/mitchell"
+import { boardNumbersAt, eastWestPairAt, mitchellResultCount, type MitchellBoardsPerRound, type MitchellTableCount } from "../lib/mitchell"
 import { howellAssignments, howellResultCount } from "../lib/howell"
 
 const projectId = "demo-bridge"
@@ -29,6 +29,25 @@ function howellGame(tableCount: 2 | 3) {
     movement: "howell",
     tableCount,
     pairs: Array.from({ length: tableCount * 2 }, (_, index) => `Pair ${index + 1}`),
+    directorUid: "director",
+    pairClaims: {},
+    resultCount: 0,
+    createdAt,
+    lastActivityAt: createdAt,
+  }
+}
+
+function mitchellGame(tableCount: MitchellTableCount, boardsPerRound: MitchellBoardsPerRound = 4) {
+  const createdAt = Date.now()
+  return {
+    status: "playing" as const,
+    movement: "mitchell",
+    tableCount,
+    boardsPerRound,
+    pairs: {
+      ns: Array.from({ length: tableCount }, (_, index) => `NS ${index + 1}`),
+      ew: Array.from({ length: tableCount }, (_, index) => `EW ${index + 1}`),
+    },
     directorUid: "director",
     pairClaims: {},
     resultCount: 0,
@@ -92,6 +111,60 @@ test("allows atomic Howell game creation for the selected table count", async ()
   batch.set(doc(director, "codes", "ABC234"), { gameId: "howell-created" })
   batch.set(doc(director, "active-game", "current"), { gameId: "howell-created", directorUid: "director" })
   await assertSucceeds(batch.commit())
+})
+
+test("allows atomic Mitchell game creation for the selected tables and boards", async () => {
+  for (const tableCount of [2, 3, 4] as const) {
+    for (const boardsPerRound of [3, 4] as const) {
+      await environment.clearFirestore()
+      const director = environment.authenticatedContext("director").firestore()
+      const batch = writeBatch(director)
+      batch.set(doc(director, "games", `mitchell-${tableCount}-${boardsPerRound}`), mitchellGame(tableCount, boardsPerRound))
+      batch.set(doc(director, "codes", "ABC234"), { gameId: `mitchell-${tableCount}-${boardsPerRound}` })
+      batch.set(doc(director, "active-game", "current"), { gameId: `mitchell-${tableCount}-${boardsPerRound}`, directorUid: "director" })
+      await assertSucceeds(batch.commit())
+    }
+  }
+})
+
+test("rejects Mitchell games with mismatched tables, boards, or pair names", async () => {
+  const director = environment.authenticatedContext("director").firestore()
+  const cases: Record<string, unknown>[] = [
+    { ...mitchellGame(2), tableCount: 5 },
+    { ...mitchellGame(2), boardsPerRound: 5 },
+    { ...mitchellGame(2), pairs: { ns: ["NS 1"], ew: ["EW 1", "EW 2"] } },
+    { ...mitchellGame(3), pairs: { ns: ["NS 1", "NS 2", "NS 3", ""], ew: ["EW 1", "EW 2", "EW 3", "EW 4"] } },
+  ]
+  for (const [index, data] of cases.entries()) {
+    await environment.clearFirestore()
+    const batch = writeBatch(director)
+    batch.set(doc(director, "games", `bad-mitchell-${index}`), data)
+    batch.set(doc(director, "codes", "ABC234"), { gameId: `bad-mitchell-${index}` })
+    batch.set(doc(director, "active-game", "current"), { gameId: `bad-mitchell-${index}`, directorUid: "director" })
+    await assertFails(batch.commit())
+  }
+})
+
+test("gates pair claims by Mitchell table count", async () => {
+  await seed(mitchellGame(2))
+  const small = [1, 2, 3, 4, 5].map((n) => environment.authenticatedContext(`small-${n}`).firestore())
+  for (const [index, db] of small.entries()) {
+    const pairNumber = index + 1
+    if (pairNumber <= 4) await assertSucceeds(updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: `small-${pairNumber}`, lastActivityAt: Date.now() }))
+    else await assertFails(updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: `small-${pairNumber}`, lastActivityAt: Date.now() }))
+  }
+
+  await environment.clearFirestore()
+  await seed(mitchellGame(4))
+  for (let pairNumber = 1; pairNumber <= 8; pairNumber += 1) {
+    const db = environment.authenticatedContext(`large-${pairNumber}`).firestore()
+    await assertSucceeds(updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: `large-${pairNumber}`, lastActivityAt: Date.now() }))
+  }
+
+  await environment.clearFirestore()
+  await seed()
+  const legacySeven = environment.authenticatedContext("legacy-seven").firestore()
+  await assertFails(updateDoc(doc(legacySeven, "games", gameId), { "pairClaims.7": "legacy-seven", lastActivityAt: Date.now() }))
 })
 
 test("rejects a second concurrent game", async () => {
@@ -430,8 +503,27 @@ test("rehearses six pairs through a complete Mitchell game", async () => {
 })
 
 test("rehearses scorer saves and director finish for every movement", async () => {
+  const mitchellSizes: { tableCount: MitchellTableCount; boardsPerRound: MitchellBoardsPerRound }[] = [
+    { tableCount: 2, boardsPerRound: 4 },
+    { tableCount: 3, boardsPerRound: 4 },
+    { tableCount: 3, boardsPerRound: 3 },
+    { tableCount: 4, boardsPerRound: 4 },
+    { tableCount: 4, boardsPerRound: 3 },
+  ]
   const movements = [
-    { name: "mitchell", tableCount: 3, data: game(), assignments: Array.from({ length: 3 }, (_, tableIndex) => Array.from({ length: 3 }, (_, round) => ({ table: tableIndex + 1, round, nsPairIndex: tableIndex, ewPairIndex: eastWestPairAt((tableIndex + 1) as 1 | 2 | 3, round as 0 | 1 | 2) - 1, boardNumbers: boardNumbersAt((tableIndex + 1) as 1 | 2 | 3, round as 0 | 1 | 2) }))).flat(), expectedResults: 36 },
+    ...mitchellSizes.map(({ tableCount, boardsPerRound }) => ({
+      name: `mitchell-${tableCount}-${boardsPerRound}`,
+      tableCount,
+      data: mitchellGame(tableCount, boardsPerRound),
+      assignments: Array.from({ length: tableCount }, (_, tableIndex) => Array.from({ length: tableCount }, (_, round) => ({
+        table: tableIndex + 1,
+        round,
+        nsPairIndex: tableIndex,
+        ewPairIndex: eastWestPairAt((tableIndex + 1) as 1 | 2 | 3 | 4, round as 0 | 1 | 2 | 3, tableCount) - 1,
+        boardNumbers: boardNumbersAt((tableIndex + 1) as 1 | 2 | 3 | 4, round as 0 | 1 | 2 | 3, tableCount, boardsPerRound),
+      }))).flat(),
+      expectedResults: mitchellResultCount(tableCount, boardsPerRound),
+    })),
     ...([2, 3] as const).map((tableCount) => ({ name: `howell-${tableCount}`, tableCount, data: howellGame(tableCount), assignments: howellAssignments(tableCount), expectedResults: howellResultCount(tableCount) })),
   ]
 
@@ -439,7 +531,7 @@ test("rehearses scorer saves and director finish for every movement", async () =
     await environment.clearFirestore()
     await seed(movement.data)
     await seedActiveGame()
-    const pairCount = movement.name === "mitchell" ? 6 : movement.tableCount * 2
+    const pairCount = movement.tableCount * 2
     const pairs = Array.from({ length: pairCount }, (_, index) => environment.authenticatedContext(`full-${movement.name}-${index + 1}`).firestore())
     for (const [index, pairFirestore] of pairs.entries()) await assertSucceeds(updateDoc(doc(pairFirestore, "games", gameId), { [`pairClaims.${index + 1}`]: `full-${movement.name}-${index + 1}`, lastActivityAt: Date.now() }))
 
