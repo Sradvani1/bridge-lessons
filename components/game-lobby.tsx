@@ -28,15 +28,15 @@ function PresetSelect({ label, names, onPick }: { label: string; names: readonly
   )
 }
 
-function RegularRow({ name, onRename, onRemove }: { name: string; onRename: (next: string) => boolean; onRemove: () => void }) {
+function RegularRow({ name, onCommit }: { name: string; onCommit: (draft: string) => boolean }) {
   // The list key includes the name, so external changes (reset) remount with a fresh draft.
   const [draft, setDraft] = useState(name)
   function commit() {
     if (draft === name) return
-    if (!onRename(draft)) setDraft(name)
+    if (!onCommit(draft)) setDraft(name)
   }
   return (
-    <li className="flex items-center gap-2">
+    <li>
       <input
         value={draft}
         onChange={(event) => setDraft(event.target.value.slice(0, 60))}
@@ -45,10 +45,9 @@ function RegularRow({ name, onRename, onRemove }: { name: string; onRename: (nex
           if (event.key === "Enter") (event.target as HTMLInputElement).blur()
           if (event.key === "Escape") setDraft(name)
         }}
-        aria-label={`Regular name, currently ${name}`}
+        aria-label={`Regular name, currently ${name}. Clear it to remove this regular.`}
         className={inputClass}
       />
-      <button type="button" onClick={onRemove} className="min-h-12 shrink-0 rounded-xl border border-[#8b2f27] px-4 font-bold text-[#8b2f27]">Remove</button>
     </li>
   )
 }
@@ -160,9 +159,15 @@ export default function GameLobby() {
     updateRegulars([...regulars, name])
   }
 
-  function renameRegular(index: number, value: string): boolean {
-    const name = cleanRegularName(value)
-    if (!name) return false
+  function commitRegular(index: number, draft: string): boolean {
+    const original = regulars[index]
+    const name = cleanRegularName(draft)
+    if (!name) {
+      if (!window.confirm(`Remove "${original}" from regulars?`)) return false
+      setRegularsNote("")
+      updateRegulars(regulars.filter((_, existingIndex) => existingIndex !== index))
+      return true
+    }
     if (regulars.some((existing, existingIndex) => existingIndex !== index && existing.toLowerCase() === name.toLowerCase())) {
       setRegularsNote(`"${name}" is already in the list.`)
       return false
@@ -170,13 +175,6 @@ export default function GameLobby() {
     setRegularsNote("")
     updateRegulars(regulars.map((existing, existingIndex) => existingIndex === index ? name : existing))
     return true
-  }
-
-  function removeRegular(index: number) {
-    const name = regulars[index]
-    if (!window.confirm(`Remove "${name}" from regulars?`)) return
-    setRegularsNote("")
-    updateRegulars(regulars.filter((_, existingIndex) => existingIndex !== index))
   }
 
   function resetRegulars() {
@@ -244,9 +242,9 @@ export default function GameLobby() {
       {movement === "mitchell" ? <><fieldset className="mt-5"><legend className="font-bold text-[#173c2a]">Tables</legend><div className="mt-2 flex gap-3">{([2, 3, 4] as const).map((tableCount) => <button key={tableCount} type="button" onClick={() => setMitchellTables(tableCount)} className={`min-h-11 rounded-lg px-4 font-bold ${mitchellTableCount === tableCount ? "bg-[#1d5138] text-white" : "bg-white text-[#173c2a]"}`}>{tableCount} tables</button>)}</div></fieldset><fieldset className="mt-5"><legend className="font-bold text-[#173c2a]">Boards per round</legend><div className="mt-2 flex gap-3">{([3, 4] as const).map((boards) => <button key={boards} type="button" onClick={() => setMitchellBoardsPerRound(boards)} className={`min-h-11 rounded-lg px-4 font-bold ${mitchellBoardsPerRound === boards ? "bg-[#1d5138] text-white" : "bg-white text-[#173c2a]"}`}>{boards} boards</button>)}</div></fieldset><p className="mt-3 leading-7 text-[#52615a]">{mitchellTableCount} tables, {mitchellTableCount * 2} pairs, {mitchellRoundCount(mitchellTableCount)} rounds, {mitchellBoardCount(mitchellTableCount, mitchellBoardsPerRound)} boards. Enter a name for every pair — the game can&apos;t start until all are filled.</p><div className="mt-5 grid gap-4 sm:grid-cols-2">{(["ns", "ew"] as const).map((direction) => <fieldset key={direction}><legend className="font-bold text-[#173c2a]">{direction === "ns" ? "North-South pairs" : "East-West pairs"}</legend>{(direction === "ns" ? ns : ew).map((pair, index) => <label key={index} className="mt-3 block font-semibold text-[#294236]">Pair {index + 1}<input value={pair} required onChange={(event) => updatePair(direction, index, event.target.value)} className={inputClass} /><PresetSelect label={`Regulars for Pair ${index + 1}`} names={regulars} onPick={(value) => updatePair(direction, index, value)} /></label>)}</fieldset>)}</div></> : <><fieldset className="mt-5"><legend className="font-bold text-[#173c2a]">Tables</legend><div className="mt-2 flex gap-3">{([2, 3] as const).map((tableCount) => <button key={tableCount} type="button" onClick={() => setHowellTables(tableCount)} className={`min-h-11 rounded-lg px-4 font-bold ${howellTableCount === tableCount ? "bg-[#1d5138] text-white" : "bg-white text-[#173c2a]"}`}>{tableCount} tables</button>)}</div></fieldset><p className="mt-3 leading-7 text-[#52615a]">{howellPairCount(howellTableCount)} pairs, {howellRoundCount(howellTableCount)} rounds, {howellBoardCount(howellTableCount)} boards. Enter a name for every pair — the game can&apos;t start until all are filled.</p><div className="mt-5 grid gap-4 sm:grid-cols-2">{howellPairs.map((pair, index) => <label key={index} className="block font-semibold text-[#294236]">Pair {index + 1}<input value={pair} required onChange={(event) => setHowellPairs((pairs) => pairs.map((item, pairIndex) => pairIndex === index ? event.target.value.slice(0, 60) : item))} className={inputClass} /><PresetSelect label={`Regulars for Pair ${index + 1}`} names={regulars} onPick={(value) => setHowellPairs((pairs) => pairs.map((item, pairIndex) => pairIndex === index ? value.slice(0, 60) : item))} /></label>)}</div></>}
       <fieldset className="mt-6">
         <legend className="font-bold text-[#173c2a]">Regulars</legend>
-        <p className="mt-1 leading-7 text-[#52615a]">Names offered in the “Fill from regulars” menus above. Changes save on this phone automatically.</p>
+        <p className="mt-1 leading-7 text-[#52615a]">Names offered in the “Fill from regulars” menus above. Tap a name to change it, or clear it to remove it — changes save on this phone automatically.</p>
         {regularsNote ? <p role="status" className="mt-2 font-semibold text-[#173c2a]">{regularsNote}</p> : null}
-        {regulars.length > 0 ? <ul className="mt-3 space-y-2">{regulars.map((name, index) => <RegularRow key={`${index}-${name}`} name={name} onRename={(next) => renameRegular(index, next)} onRemove={() => removeRegular(index)} />)}</ul> : <p className="mt-3 leading-7 text-[#52615a]">No regulars yet — add the first one below.</p>}
+        {regulars.length > 0 ? <ul className="mt-3 space-y-2">{regulars.map((name, index) => <RegularRow key={`${index}-${name}`} name={name} onCommit={(draft) => commitRegular(index, draft)} />)}</ul> : <p className="mt-3 leading-7 text-[#52615a]">No regulars yet — add the first one below.</p>}
         <div className="mt-3 flex items-end gap-2">
           <label className="flex-1 font-semibold text-[#294236]">Add a regular<input value={newRegular} onChange={(event) => setNewRegular(event.target.value.slice(0, 60))} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addRegular() } }} placeholder="Type a pair name" className={inputClass} /></label>
           <button type="button" onClick={addRegular} className="min-h-12 shrink-0 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Add</button>
