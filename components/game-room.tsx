@@ -10,7 +10,7 @@ import { requireUserId } from "@/lib/firebase"
 import { isOnline, OFFLINE_MESSAGE } from "@/lib/online"
 import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, mitchellBoardCount, mitchellRoundCount, type MitchellBoardsPerRound, type MitchellTableCount, type RoundIndex } from "@/lib/mitchell"
 import { howellAssignmentAt, howellAssignments, howellBoardCount, howellResultCount, howellRoundCount } from "@/lib/howell"
-import { computeHowellStandings, computeStandings, howellMatchpointPercentage, matchpointPercentage, type StandingsRow } from "@/lib/standings"
+import { computeHowellStandings, computeStandings, howellMatchpointPercentage, matchpointPercentage, type Standings, type StandingsRow } from "@/lib/standings"
 import ScoreGlossary from "@/components/score-glossary"
 
 const GameJoinQr = dynamic(() => import("@/components/game-join-qr"), { ssr: false })
@@ -348,7 +348,14 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   if (!game) return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">{gameConnectionError ? "Could Not Connect" : "Game Not Found"}</h1><p className="mt-3 text-[#52615a]">{gameConnectionError ? "Check the connection, then try again." : "This link is invalid or the game is no longer available."}</p>{gameConnectionError ? <p role="alert" className="mt-4 rounded-xl bg-[#fff3f1] p-4 font-semibold text-[#8b2f27]">{gameConnectionError}</p> : null}<div className="mt-5 flex flex-wrap gap-3">{gameConnectionError ? <button type="button" onClick={retryGame} className="min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Try Again</button> : null}<button type="button" onClick={() => router.push("/play")} className="min-h-12 rounded-xl border border-[#1d5138] px-5 font-bold text-[#173c2a]">Back to Game Lobby</button></div></section>
   if (game.status === "cancelled") return <section className="rounded-2xl border border-[#cbd5cc] bg-[#f3ecdc] p-6"><h1 className="text-3xl font-bold text-[#123a28]">Game Cancelled</h1><p className="mt-3 text-[#52615a]">This game is no longer active. Start or join the current class game from the lobby.</p><button type="button" onClick={() => router.push("/play")} className="mt-5 min-h-12 rounded-xl bg-[#1d5138] px-5 font-bold text-white">Back to Game Lobby</button></section>
 
-  const standings = game.movement === "howell" ? null : computeStandings(results, game.pairs)
+  // Standings must never blank the room: broken or partial data falls back to hidden standings.
+  let standings: Standings | null = null
+  try {
+    standings = game.movement === "howell" ? null : computeStandings(results, game.pairs)
+  } catch (error) {
+    console.warn("[bridge:standings]", error)
+    standings = null
+  }
   const howellStandings = game.movement === "howell" ? computeHowellStandings(results, game.pairs) : null
   const howellTableCount = game.movement === "howell" ? game.tableCount : null
   const tableNumbers = Array.from({ length: game.tableCount }, (_, index) => index + 1)

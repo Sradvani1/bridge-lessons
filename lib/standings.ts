@@ -21,11 +21,21 @@ function zeros(count: number): number[] {
 }
 
 function matchpointsByPair(entries: readonly { pairIndex: number; score: number }[]): Map<number, number> {
-  const rows: BoardResult[] = entries.map((entry) => ({
-    id: String(entry.pairIndex),
-    label: "",
-    nsScore: entry.score,
-  }))
+  // A pair never legitimately holds two rows on one board (canonical result
+  // IDs pin the North-South side; the movement pins the East-West side), but a
+  // broken movement can file the same pair twice. Keep the first play so the
+  // standings stay viewable instead of blanking the room for everyone.
+  const seen = new Set<number>()
+  const rows: BoardResult[] = []
+  for (const entry of entries) {
+    if (seen.has(entry.pairIndex)) continue
+    seen.add(entry.pairIndex)
+    rows.push({
+      id: String(entry.pairIndex),
+      label: "",
+      nsScore: entry.score,
+    })
+  }
   const map = new Map<number, number>()
   for (const ranked of rankBoardResults(rows)) {
     map.set(Number(ranked.id), ranked.matchpoints)

@@ -99,6 +99,21 @@ test("aggregates Mitchell matchpoints by direction", () => {
   assert.equal(standings.ns[0].boardsPlayed, 1)
 })
 
+test("tolerates a pair dealt the same board twice without crashing", () => {
+  // Regression: an invalid movement filed East-West pair 3 on board 9 in two
+  // rounds, which used to throw inside rankBoardResults and blank the room.
+  const results: StoredResult[] = [
+    { boardNumber: 9, round: 0, table: 3, nsPairIndex: 2, ewPairIndex: 2, kind: "passed-out", updatedBy: "a", updatedAt: 1 },
+    { boardNumber: 9, round: 1, table: 2, nsPairIndex: 1, ewPairIndex: 0, kind: "passed-out", updatedBy: "b", updatedAt: 2 },
+    { boardNumber: 9, round: 2, table: 1, nsPairIndex: 0, ewPairIndex: 2, kind: "passed-out", updatedBy: "c", updatedAt: 3 },
+  ]
+  const standings = computeStandings(results, { ns: ["NS 1", "NS 2", "NS 3", "NS 4"], ew: ["EW 1", "EW 2", "EW 3", "EW 4"] })
+  // Three distinct North-South plays tie for 2 matchpoints each; the replayed
+  // East-West pair counts only its first play in a two-way tie for 1 each.
+  assert.deepEqual(standings.ns.map((row) => row.totalMatchpoints), [2, 2, 2, 0])
+  assert.deepEqual(standings.ew.map((row) => row.totalMatchpoints), [1, 0, 1, 0])
+})
+
 test("rejects malformed stored results", () => {
   assert.equal(parseStoredResult({ boardNumber: 1, kind: "contract" }), null)
 })
