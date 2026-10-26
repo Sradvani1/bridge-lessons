@@ -113,27 +113,27 @@ test("allows atomic Howell game creation for the selected table count", async ()
   await assertSucceeds(batch.commit())
 })
 
-test("allows atomic Mitchell game creation for the selected tables and boards", async () => {
-  for (const tableCount of [2, 3, 4] as const) {
-    for (const boardsPerRound of [3, 4] as const) {
-      await environment.clearFirestore()
-      const director = environment.authenticatedContext("director").firestore()
-      const batch = writeBatch(director)
-      batch.set(doc(director, "games", `mitchell-${tableCount}-${boardsPerRound}`), mitchellGame(tableCount, boardsPerRound))
-      batch.set(doc(director, "codes", "ABC234"), { gameId: `mitchell-${tableCount}-${boardsPerRound}` })
-      batch.set(doc(director, "active-game", "current"), { gameId: `mitchell-${tableCount}-${boardsPerRound}`, directorUid: "director" })
-      await assertSucceeds(batch.commit())
-    }
+test("allows atomic Mitchell game creation with three or four boards per round", async () => {
+  for (const boardsPerRound of [3, 4] as const) {
+    await environment.clearFirestore()
+    const director = environment.authenticatedContext("director").firestore()
+    const batch = writeBatch(director)
+    batch.set(doc(director, "games", `mitchell-3-${boardsPerRound}`), mitchellGame(3, boardsPerRound))
+    batch.set(doc(director, "codes", "ABC234"), { gameId: `mitchell-3-${boardsPerRound}` })
+    batch.set(doc(director, "active-game", "current"), { gameId: `mitchell-3-${boardsPerRound}`, directorUid: "director" })
+    await assertSucceeds(batch.commit())
   }
 })
 
 test("rejects Mitchell games with mismatched tables, boards, or pair names", async () => {
   const director = environment.authenticatedContext("director").firestore()
   const cases: Record<string, unknown>[] = [
-    { ...mitchellGame(2), tableCount: 5 },
-    { ...mitchellGame(2), boardsPerRound: 5 },
-    { ...mitchellGame(2), pairs: { ns: ["NS 1"], ew: ["EW 1", "EW 2"] } },
-    { ...mitchellGame(3), pairs: { ns: ["NS 1", "NS 2", "NS 3", ""], ew: ["EW 1", "EW 2", "EW 3", "EW 4"] } },
+    { ...mitchellGame(3, 4), tableCount: 5 },
+    { ...mitchellGame(3, 4), boardsPerRound: 5 },
+    { ...mitchellGame(2, 4) },
+    { ...mitchellGame(4, 4) },
+    { ...mitchellGame(3, 4), pairs: { ns: ["NS 1", "NS 2"], ew: ["EW 1", "EW 2", "EW 3"] } },
+    { ...mitchellGame(3, 4), pairs: { ns: ["NS 1", "NS 2", "NS 3", ""], ew: ["EW 1", "EW 2", "EW 3", "EW 4"] } },
   ]
   for (const [index, data] of cases.entries()) {
     await environment.clearFirestore()

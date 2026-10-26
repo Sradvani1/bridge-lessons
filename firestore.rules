@@ -110,7 +110,10 @@ service cloud.firestore {
           && request.resource.data.pairs[3] is string && request.resource.data.pairs[3].size() >= 1 && request.resource.data.pairs[3].size() <= 60
           && (request.resource.data.tableCount == 2 || (request.resource.data.pairs[4] is string && request.resource.data.pairs[4].size() >= 1 && request.resource.data.pairs[4].size() <= 60 && request.resource.data.pairs[5] is string && request.resource.data.pairs[5].size() >= 1 && request.resource.data.pairs[5].size() <= 60)))
           || (request.resource.data.movement == 'mitchell'
-            && request.resource.data.tableCount in [2, 3, 4]
+            // Mitchell rotations only work with an odd table count; even
+            // counts replay boards (see lib/mitchell.ts). Existing docs of any
+            // size stay readable and writable below; only new games are gated.
+            && request.resource.data.tableCount == 3
             && request.resource.data.boardsPerRound in [3, 4]
             && request.resource.data.pairs is map
             && request.resource.data.pairs.keys().hasOnly(['ns', 'ew'])
