@@ -1,10 +1,18 @@
 import type { BoardVulnerability } from "./bridge-scoring"
 
-export type MitchellTableCount = 2 | 3 | 4
+export type MitchellTableCount = 2 | 3 | 4 | 5
+
+/**
+ * Sizes the app can create. Mitchell rotations only line up fairly with an
+ * odd table count; even counts replay boards for East-West pairs, so 2 and 4
+ * are readable (legacy games) but never offered for new games.
+ */
+export const CREATABLE_MITCHELL_TABLE_COUNTS = [3, 5] as const
+export type CreatableMitchellTableCount = (typeof CREATABLE_MITCHELL_TABLE_COUNTS)[number]
 export type MitchellBoardsPerRound = 3 | 4
 
 export function isMitchellTableCount(value: number): value is MitchellTableCount {
-  return value === 2 || value === 3 || value === 4
+  return value === 2 || value === 3 || value === 4 || value === 5
 }
 
 export function isMitchellBoardsPerRound(value: number): value is MitchellBoardsPerRound {
@@ -45,8 +53,10 @@ const DEALER_CYCLE = ["North", "East", "South", "West"] as const
 
 export type Dealer = (typeof DEALER_CYCLE)[number]
 
+// Vulnerability and dealership repeat every 16 / 4 boards by the laws of bridge,
+// so any positive board number maps into the cycle (needed past board 16).
 function isScoringBoardNumber(boardNumber: number): boolean {
-  return Number.isInteger(boardNumber) && boardNumber >= 1 && boardNumber <= VULNERABILITY_CYCLE.length
+  return Number.isInteger(boardNumber) && boardNumber >= 1
 }
 
 export function boardVulnerability(boardNumber: number): BoardVulnerability | null {
@@ -57,8 +67,8 @@ export function boardDealer(boardNumber: number): Dealer | null {
   return isScoringBoardNumber(boardNumber) ? DEALER_CYCLE[(boardNumber - 1) % DEALER_CYCLE.length] : null
 }
 
-export type TableNumber = 1 | 2 | 3 | 4
-export type RoundIndex = 0 | 1 | 2 | 3
+export type TableNumber = 1 | 2 | 3 | 4 | 5
+export type RoundIndex = 0 | 1 | 2 | 3 | 4
 
 export function isTableNumber(value: number, tableCount: MitchellTableCount = 3): value is TableNumber {
   return Number.isInteger(value) && value >= 1 && value <= tableCount

@@ -87,10 +87,9 @@ service cloud.firestore {
           : (('6' in gameData().pairClaims.keys()) && gameData().pairClaims['6'] == request.auth.uid) ? '6'
           : (('7' in gameData().pairClaims.keys()) && gameData().pairClaims['7'] == request.auth.uid) ? '7'
           : (('8' in gameData().pairClaims.keys()) && gameData().pairClaims['8'] == request.auth.uid) ? '8'
+          : (('9' in gameData().pairClaims.keys()) && gameData().pairClaims['9'] == request.auth.uid) ? '9'
+          : (('10' in gameData().pairClaims.keys()) && gameData().pairClaims['10'] == request.auth.uid) ? '10'
           : "";
-      }
-      function ownsPair() {
-        return myPair() != "";
       }
 
       allow get: if signedIn();
@@ -110,10 +109,10 @@ service cloud.firestore {
           && request.resource.data.pairs[3] is string && request.resource.data.pairs[3].size() >= 1 && request.resource.data.pairs[3].size() <= 60
           && (request.resource.data.tableCount == 2 || (request.resource.data.pairs[4] is string && request.resource.data.pairs[4].size() >= 1 && request.resource.data.pairs[4].size() <= 60 && request.resource.data.pairs[5] is string && request.resource.data.pairs[5].size() >= 1 && request.resource.data.pairs[5].size() <= 60)))
           || (request.resource.data.movement == 'mitchell'
-            // Mitchell rotations only work with an odd table count; even
-            // counts replay boards (see lib/mitchell.ts). Existing docs of any
-            // size stay readable and writable below; only new games are gated.
-            && request.resource.data.tableCount == 3
+            // Mitchell rotations only line up fairly with an odd table count;
+            // even counts replay boards (see lib/mitchell.ts). Existing docs of
+            // any size stay readable and writable below; only new games are gated.
+            && request.resource.data.tableCount in [3, 5]
             && request.resource.data.boardsPerRound in [3, 4]
             && request.resource.data.pairs is map
             && request.resource.data.pairs.keys().hasOnly(['ns', 'ew'])
@@ -125,10 +124,12 @@ service cloud.firestore {
             && request.resource.data.pairs.ns[1] is string && request.resource.data.pairs.ns[1].size() >= 1 && request.resource.data.pairs.ns[1].size() <= 60
             && (request.resource.data.tableCount < 3 || (request.resource.data.pairs.ns[2] is string && request.resource.data.pairs.ns[2].size() >= 1 && request.resource.data.pairs.ns[2].size() <= 60))
             && (request.resource.data.tableCount < 4 || (request.resource.data.pairs.ns[3] is string && request.resource.data.pairs.ns[3].size() >= 1 && request.resource.data.pairs.ns[3].size() <= 60))
+            && (request.resource.data.tableCount < 5 || (request.resource.data.pairs.ns[4] is string && request.resource.data.pairs.ns[4].size() >= 1 && request.resource.data.pairs.ns[4].size() <= 60))
             && request.resource.data.pairs.ew[0] is string && request.resource.data.pairs.ew[0].size() >= 1 && request.resource.data.pairs.ew[0].size() <= 60
             && request.resource.data.pairs.ew[1] is string && request.resource.data.pairs.ew[1].size() >= 1 && request.resource.data.pairs.ew[1].size() <= 60
             && (request.resource.data.tableCount < 3 || (request.resource.data.pairs.ew[2] is string && request.resource.data.pairs.ew[2].size() >= 1 && request.resource.data.pairs.ew[2].size() <= 60))
-            && (request.resource.data.tableCount < 4 || (request.resource.data.pairs.ew[3] is string && request.resource.data.pairs.ew[3].size() >= 1 && request.resource.data.pairs.ew[3].size() <= 60)))
+            && (request.resource.data.tableCount < 4 || (request.resource.data.pairs.ew[3] is string && request.resource.data.pairs.ew[3].size() >= 1 && request.resource.data.pairs.ew[3].size() <= 60))
+            && (request.resource.data.tableCount < 5 || (request.resource.data.pairs.ew[4] is string && request.resource.data.pairs.ew[4].size() >= 1 && request.resource.data.pairs.ew[4].size() <= 60)))
           || ((!('movement' in request.resource.data.keys()) || request.resource.data.movement == 'mitchell')
             && !('tableCount' in request.resource.data.keys())
             && !('boardsPerRound' in request.resource.data.keys())
@@ -152,76 +153,84 @@ service cloud.firestore {
         && request.resource.data.lastActivityAt == request.resource.data.createdAt
         && getAfter(activeGamePath()).data.gameId == gameId
         && getAfter(activeGamePath()).data.directorUid == request.auth.uid;
-      function validPairClaim() {
+      function validPairClaimIn(changed, pairChanged, pairBefore, pairAfter, pair) {
         return gameData().status == 'playing'
           && validActivityUpdate()
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pairClaims', 'lastActivityAt'])
-          && request.resource.data.pairClaims.keys().hasOnly(['1', '2', '3', '4', '5', '6', '7', '8'])
-          && myPair() == ""
-          && ((request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['1'])
-                && !('1' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['1'] == request.auth.uid)
-            || (request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['2'])
-                && !('2' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['2'] == request.auth.uid)
-            || (request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['3'])
-                && !('3' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['3'] == request.auth.uid)
-            || (request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['4'])
-                && !('4' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['4'] == request.auth.uid)
+          && changed.hasOnly(['pairClaims', 'lastActivityAt'])
+          && pairAfter.keys().hasOnly(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'])
+          && pair == ""
+          && ((pairChanged.hasOnly(['1'])
+                && !('1' in pairBefore)
+                && pairAfter['1'] == request.auth.uid)
+            || (pairChanged.hasOnly(['2'])
+                && !('2' in pairBefore)
+                && pairAfter['2'] == request.auth.uid)
+            || (pairChanged.hasOnly(['3'])
+                && !('3' in pairBefore)
+                && pairAfter['3'] == request.auth.uid)
+            || (pairChanged.hasOnly(['4'])
+                && !('4' in pairBefore)
+                && pairAfter['4'] == request.auth.uid)
             || (mitchellTc() >= 3
-                && request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['5'])
-                && !('5' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['5'] == request.auth.uid)
+                && pairChanged.hasOnly(['5'])
+                && !('5' in pairBefore)
+                && pairAfter['5'] == request.auth.uid)
             || (mitchellTc() >= 3
-                && request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['6'])
-                && !('6' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['6'] == request.auth.uid)
-            || (!isHowellGame() && mitchellTc() == 4
-                && request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['7'])
-                && !('7' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['7'] == request.auth.uid)
-            || (!isHowellGame() && mitchellTc() == 4
-                && request.resource.data.pairClaims.diff(gameData().pairClaims).affectedKeys().hasOnly(['8'])
-                && !('8' in gameData().pairClaims.keys())
-                && request.resource.data.pairClaims['8'] == request.auth.uid));
+                && pairChanged.hasOnly(['6'])
+                && !('6' in pairBefore)
+                && pairAfter['6'] == request.auth.uid)
+            || (!isHowellGame() && (mitchellTc() == 4 || mitchellTc() == 5)
+                && pairChanged.hasOnly(['7'])
+                && !('7' in pairBefore)
+                && pairAfter['7'] == request.auth.uid)
+            || (!isHowellGame() && (mitchellTc() == 4 || mitchellTc() == 5)
+                && pairChanged.hasOnly(['8'])
+                && !('8' in pairBefore)
+                && pairAfter['8'] == request.auth.uid)
+            || (!isHowellGame() && mitchellTc() == 5
+                && pairChanged.hasOnly(['9'])
+                && !('9' in pairBefore)
+                && pairAfter['9'] == request.auth.uid)
+            || (!isHowellGame() && mitchellTc() == 5
+                && pairChanged.hasOnly(['10'])
+                && !('10' in pairBefore)
+                && pairAfter['10'] == request.auth.uid));
       }
-      function validPairRelease() {
+      function validPairReleaseIn(changed, pairDiff, pairAfterKeys, pair) {
         return gameData().status == 'playing'
           && validActivityUpdate()
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['pairClaims', 'lastActivityAt'])
-          && request.resource.data.pairClaims.diff(gameData().pairClaims).addedKeys().size() == 0
-          && request.resource.data.pairClaims.diff(gameData().pairClaims).changedKeys().size() == 0
-          && request.resource.data.pairClaims.diff(gameData().pairClaims).removedKeys().hasOnly(['1', '2', '3', '4', '5', '6', '7', '8'])
-          && request.resource.data.pairClaims.diff(gameData().pairClaims).removedKeys().size() >= 1
-          && (isDirector() || ownPairRelease());
+          && changed.hasOnly(['pairClaims', 'lastActivityAt'])
+          && pairDiff.addedKeys().size() == 0
+          && pairDiff.changedKeys().size() == 0
+          && pairDiff.removedKeys().hasOnly(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'])
+          && pairDiff.removedKeys().size() >= 1
+          && (isDirector() || ownPairReleaseIn(pair, pairAfterKeys, pairDiff));
       }
-      function ownPairRelease() {
-        return signedIn() && myPair() != ""
-          && !(myPair() in request.resource.data.pairClaims.keys())
-          && request.resource.data.pairClaims.diff(gameData().pairClaims).removedKeys().size() == 1;
+      function ownPairReleaseIn(pair, pairAfterKeys, pairDiff) {
+        return signedIn() && pair != ""
+          && !(pair in pairAfterKeys)
+          && pairDiff.removedKeys().size() == 1;
       }
       function validActivityUpdate() {
         return currentTimestamp(request.resource.data.lastActivityAt)
           && (!('lastActivityAt' in gameData().keys()) || request.resource.data.lastActivityAt >= gameData().lastActivityAt);
       }
-      function validDirectorActivityUpdate() {
-        return (isDirector() || ownsPair())
+      function validDirectorActivityUpdateIn(changed, pair) {
+        return (isDirector() || pair != "")
           && gameData().status == 'playing'
           && validActivityUpdate()
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['lastActivityAt']);
+          && changed.hasOnly(['lastActivityAt']);
       }
-      function validGameClosure() {
+      function validGameClosureIn(changed) {
         return isDirector()
           && gameData().status == 'playing'
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
+          && changed.hasOnly(['status'])
           && request.resource.data.status in ['finished', 'cancelled']
           && !existsAfter(activeGamePath());
       }
-      function validStaleGameCancellation() {
+      function validStaleGameCancellationIn(changed) {
         return staleGameData()
-          && request.resource.data.diff(gameData()).affectedKeys().hasOnly(['status'])
+          && changed.hasOnly(['status'])
           && request.resource.data.status == 'cancelled'
           // A stale game may only be cancelled while its active lock is replaced.
           && exists(activeGamePath())
@@ -231,14 +240,20 @@ service cloud.firestore {
       }
       // Pair claims stick to people, not furniture. Finishing or cancelling clears the active-game lock.
       // The activity heartbeat is first: it is the hottest path and fails fast
-      // for every other update shape, keeping batched scorer writes in budget.
-      allow update: if signedIn() && (
-        validDirectorActivityUpdate()
-        || validPairRelease()
-        || validPairClaim()
-        || validGameClosure()
-        || validStaleGameCancellation()
-      );
+      // for every other update shape. Each update evaluates the document diffs
+      // once here and threads them through: repeating diff() calls across
+      // branches exceeds the per-request expression budget on large games.
+      function allowGameUpdate() {
+        let changed = request.resource.data.diff(gameData()).affectedKeys();
+        let pairDiff = request.resource.data.pairClaims.diff(gameData().pairClaims);
+        let pair = myPair();
+        return validDirectorActivityUpdateIn(changed, pair)
+          || validPairReleaseIn(changed, pairDiff, request.resource.data.pairClaims.keys(), pair)
+          || validPairClaimIn(changed, pairDiff.affectedKeys(), gameData().pairClaims.keys(), request.resource.data.pairClaims, pair)
+          || validGameClosureIn(changed)
+          || validStaleGameCancellationIn(changed);
+      }
+      allow update: if signedIn() && allowGameUpdate();
       allow delete: if false;
 
       match /results/{resultId} {
@@ -261,6 +276,8 @@ service cloud.firestore {
             : (('6' in doc.pairClaims.keys()) && doc.pairClaims['6'] == request.auth.uid) ? '6'
             : (('7' in doc.pairClaims.keys()) && doc.pairClaims['7'] == request.auth.uid) ? '7'
             : (('8' in doc.pairClaims.keys()) && doc.pairClaims['8'] == request.auth.uid) ? '8'
+            : (('9' in doc.pairClaims.keys()) && doc.pairClaims['9'] == request.auth.uid) ? '9'
+            : (('10' in doc.pairClaims.keys()) && doc.pairClaims['10'] == request.auth.uid) ? '10'
             : "";
         }
         function isHowellIn(doc) {
@@ -273,7 +290,8 @@ service cloud.firestore {
           return ('boardsPerRound' in doc.keys()) ? doc.boardsPerRound : 4;
         }
         // Pairs see only rows they play in. Mitchell P1-T are NS, P(T+1)..P(2T)
-        // are EW; Howell pairs play both sides by round.
+        // are EW (pairs 1-5 NS and 6-10 EW at five tables); Howell pairs play
+        // both sides by round.
         // The pair number is bound once per check: re-evaluating the lookup in
         // every branch exceeds the per-request expression budget.
         function participatesIn(entry, pair, tc, howell) {
@@ -281,11 +299,13 @@ service cloud.firestore {
             ? (pair == '1' && entry.nsPairIndex == 0)
               || (pair == '2' && entry.nsPairIndex == 1)
               || (pair == '3' && ((tc == 2 && entry.ewPairIndex == 0) || (tc >= 3 && entry.nsPairIndex == 2)))
-              || (pair == '4' && ((tc == 4 && entry.nsPairIndex == 3) || (tc == 3 && entry.ewPairIndex == 0) || (tc == 2 && entry.ewPairIndex == 1)))
-              || (pair == '5' && ((tc == 4 && entry.ewPairIndex == 0) || (tc == 3 && entry.ewPairIndex == 1)))
-              || (pair == '6' && ((tc == 4 && entry.ewPairIndex == 1) || (tc == 3 && entry.ewPairIndex == 2)))
-              || (pair == '7' && entry.ewPairIndex == 2)
-              || (pair == '8' && entry.ewPairIndex == 3)
+              || (pair == '4' && (((tc == 4 || tc == 5) && entry.nsPairIndex == 3) || (tc == 3 && entry.ewPairIndex == 0) || (tc == 2 && entry.ewPairIndex == 1)))
+              || (pair == '5' && ((tc == 5 && entry.nsPairIndex == 4) || (tc == 4 && entry.ewPairIndex == 0) || (tc == 3 && entry.ewPairIndex == 1)))
+              || (pair == '6' && ((tc == 5 && entry.ewPairIndex == 0) || (tc == 4 && entry.ewPairIndex == 1) || (tc == 3 && entry.ewPairIndex == 2)))
+              || (pair == '7' && ((tc == 5 && entry.ewPairIndex == 1) || (tc == 4 && entry.ewPairIndex == 2)))
+              || (pair == '8' && ((tc == 5 && entry.ewPairIndex == 2) || (tc == 4 && entry.ewPairIndex == 3)))
+              || (pair == '9' && entry.ewPairIndex == 3)
+              || (pair == '10' && entry.ewPairIndex == 4)
             : (pair == '1' && (entry.nsPairIndex == 0 || entry.ewPairIndex == 0))
               || (pair == '2' && (entry.nsPairIndex == 1 || entry.ewPairIndex == 1))
               || (pair == '3' && (entry.nsPairIndex == 2 || entry.ewPairIndex == 2))

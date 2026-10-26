@@ -113,22 +113,26 @@ test("allows atomic Howell game creation for the selected table count", async ()
   await assertSucceeds(batch.commit())
 })
 
-test("allows atomic Mitchell game creation with three or four boards per round", async () => {
-  for (const boardsPerRound of [3, 4] as const) {
-    await environment.clearFirestore()
-    const director = environment.authenticatedContext("director").firestore()
-    const batch = writeBatch(director)
-    batch.set(doc(director, "games", `mitchell-3-${boardsPerRound}`), mitchellGame(3, boardsPerRound))
-    batch.set(doc(director, "codes", "ABC234"), { gameId: `mitchell-3-${boardsPerRound}` })
-    batch.set(doc(director, "active-game", "current"), { gameId: `mitchell-3-${boardsPerRound}`, directorUid: "director" })
-    await assertSucceeds(batch.commit())
+test("allows atomic Mitchell game creation with three or five tables", async () => {
+  for (const tableCount of [3, 5] as const) {
+    for (const boardsPerRound of [3, 4] as const) {
+      await environment.clearFirestore()
+      const director = environment.authenticatedContext("director").firestore()
+      const batch = writeBatch(director)
+      batch.set(doc(director, "games", `mitchell-${tableCount}-${boardsPerRound}`), mitchellGame(tableCount, boardsPerRound))
+      batch.set(doc(director, "codes", "ABC234"), { gameId: `mitchell-${tableCount}-${boardsPerRound}` })
+      batch.set(doc(director, "active-game", "current"), { gameId: `mitchell-${tableCount}-${boardsPerRound}`, directorUid: "director" })
+      await assertSucceeds(batch.commit())
+    }
   }
 })
 
 test("rejects Mitchell games with mismatched tables, boards, or pair names", async () => {
   const director = environment.authenticatedContext("director").firestore()
   const cases: Record<string, unknown>[] = [
-    { ...mitchellGame(3, 4), tableCount: 5 },
+    { ...mitchellGame(3, 4), tableCount: 2 },
+    { ...mitchellGame(3, 4), tableCount: 4 },
+    { ...mitchellGame(3, 4), tableCount: 7 },
     { ...mitchellGame(3, 4), boardsPerRound: 5 },
     { ...mitchellGame(2, 4) },
     { ...mitchellGame(4, 4) },
@@ -162,9 +166,18 @@ test("gates pair claims by Mitchell table count", async () => {
   }
 
   await environment.clearFirestore()
+  await seed(mitchellGame(5))
+  for (let pairNumber = 1; pairNumber <= 10; pairNumber += 1) {
+    const db = environment.authenticatedContext(`huge-${pairNumber}`).firestore()
+    await assertSucceeds(updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: `huge-${pairNumber}`, lastActivityAt: Date.now() }))
+  }
+
+  await environment.clearFirestore()
   await seed()
   const legacySeven = environment.authenticatedContext("legacy-seven").firestore()
   await assertFails(updateDoc(doc(legacySeven, "games", gameId), { "pairClaims.7": "legacy-seven", lastActivityAt: Date.now() }))
+  const legacyNine = environment.authenticatedContext("legacy-nine").firestore()
+  await assertFails(updateDoc(doc(legacyNine, "games", gameId), { "pairClaims.9": "legacy-nine", lastActivityAt: Date.now() }))
 })
 
 test("rejects a second concurrent game", async () => {
@@ -509,6 +522,8 @@ test("rehearses scorer saves and director finish for every movement", async () =
     { tableCount: 3, boardsPerRound: 3 },
     { tableCount: 4, boardsPerRound: 4 },
     { tableCount: 4, boardsPerRound: 3 },
+    { tableCount: 5, boardsPerRound: 4 },
+    { tableCount: 5, boardsPerRound: 3 },
   ]
   const movements = [
     ...mitchellSizes.map(({ tableCount, boardsPerRound }) => ({
@@ -519,8 +534,8 @@ test("rehearses scorer saves and director finish for every movement", async () =
         table: tableIndex + 1,
         round,
         nsPairIndex: tableIndex,
-        ewPairIndex: eastWestPairAt((tableIndex + 1) as 1 | 2 | 3 | 4, round as 0 | 1 | 2 | 3, tableCount) - 1,
-        boardNumbers: boardNumbersAt((tableIndex + 1) as 1 | 2 | 3 | 4, round as 0 | 1 | 2 | 3, tableCount, boardsPerRound),
+        ewPairIndex: eastWestPairAt((tableIndex + 1) as 1 | 2 | 3 | 4 | 5, round as 0 | 1 | 2 | 3 | 4, tableCount) - 1,
+        boardNumbers: boardNumbersAt((tableIndex + 1) as 1 | 2 | 3 | 4 | 5, round as 0 | 1 | 2 | 3 | 4, tableCount, boardsPerRound),
       }))).flat(),
       expectedResults: mitchellResultCount(tableCount, boardsPerRound),
     })),

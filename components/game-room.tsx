@@ -47,8 +47,8 @@ function readTableView(gameId: string): { table: number | null; round: number } 
     if (typeof parsed !== "object" || parsed === null) return fallback
     const { table, round } = parsed as { table?: unknown; round?: unknown }
     return {
-      table: typeof table === "number" && Number.isInteger(table) && table >= 1 && table <= 4 ? table : null,
-      round: typeof round === "number" && Number.isInteger(round) && round >= 0 && round <= 4 ? round : 0,
+      table: typeof table === "number" && Number.isInteger(table) && table >= 1 && table <= 5 ? table : null,
+      round: typeof round === "number" && Number.isInteger(round) && round >= 0 && round <= 6 ? round : 0,
     }
   } catch {
     return fallback
@@ -237,7 +237,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   const pairAssignment = game && claimedPair ? assignmentForPair(game, claimedPair, scorerRound) : null
   const table = director ? selectedTable : pairAssignment?.table ?? null
   const howellAssignment = game?.movement === "howell" && table ? howellAssignmentAt(game.tableCount, table, scorerRound) : null
-  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3 | 4, scorerRound as RoundIndex, game?.movement === "howell" ? 3 : (game?.tableCount ?? 3)) : null
+  const ewPair = table ? howellAssignment ? howellAssignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3 | 4 | 5, scorerRound as RoundIndex, game?.movement === "howell" ? 3 : (game?.tableCount ?? 3)) : null
 
   useEffect(() => {
     if (claimedPair) claimedPairRef.current = claimedPair
@@ -461,8 +461,8 @@ function Traveller({ results, movement, tableCount, mitchellTableCount, mitchell
 
 function TableEntry({ gameId, game, table, nsLabel, ewLabel, round, setRound, results, onError, onNotice, onSaved, director, locked, onBack, viewerDirection }: { gameId: string; game: StoredGame; table: number; nsLabel: string; ewLabel: string; round: number; setRound: (round: number) => void; results: StoredResult[]; onError: (error: string) => void; onNotice: (notice: string) => void; onSaved: () => void; director: boolean; locked: boolean; onBack?: () => void; viewerDirection?: "ns" | "ew" | null }) {
   const assignment = game.movement === "howell" ? howellAssignmentAt(game.tableCount, table, round) : null
-  const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3 | 4, round as RoundIndex, game.movement === "howell" ? 3 : game.tableCount, game.movement === "howell" ? 4 : game.boardsPerRound)
-  const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3 | 4, round as RoundIndex, game.movement === "howell" ? 3 : game.tableCount)
+  const boards = assignment?.boardNumbers ?? boardNumbersAt(table as 1 | 2 | 3 | 4 | 5, round as RoundIndex, game.movement === "howell" ? 3 : game.tableCount, game.movement === "howell" ? 4 : game.boardsPerRound)
+  const ewPair = assignment ? assignment.ewPairIndex + 1 : eastWestPairAt(table as 1 | 2 | 3 | 4 | 5, round as RoundIndex, game.movement === "howell" ? 3 : game.tableCount)
   const nsPairIndex = assignment?.nsPairIndex ?? table - 1
   const roundCount = game.movement === "howell" ? howellRoundCount(game.tableCount) : mitchellRoundCount(game.tableCount)
   return <section className="rounded-2xl border border-[#cbd5cc] bg-white p-5"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-2xl font-bold text-[#123a28]">Table {table}</h2><p className="mt-1 text-[#52615a]">{nsLabel} vs {ewLabel}.{game.movement === "howell" ? " Take this phone with you. Follow the blue card for your next table." : " Take this phone with you. North-South stays put; East-West moves up one table each round."}</p>{locked ? <p className="mt-2 font-semibold text-[#6b4b08]">Results are revealed. Entries are locked.</p> : null}{!director && viewerDirection ? <p className="mt-2 text-lg font-bold text-[#123a28]">You are {viewerDirection === "ns" ? "NORTH-SOUTH" : "EAST-WEST"} this round.</p> : null}</div>{onBack ? <button type="button" onClick={onBack} className="min-h-11 rounded-lg border border-[#1d5138] px-3 font-semibold text-[#173c2a]">Director Controls</button> : null}</div>{director ? <div className={`mt-4 grid gap-2 ${roundCount > 3 ? "grid-cols-4" : "grid-cols-3"}`}>{Array.from({ length: roundCount }, (_, value) => <button key={value} type="button" onClick={() => setRound(value)} className={`min-h-11 min-w-0 rounded-lg px-1 text-sm font-semibold sm:text-base ${round === value ? "bg-[#1d5138] text-white" : "bg-[#edf4ef] text-[#173c2a]"}`}>Round {value + 1}</button>)}</div> : <p className="mt-4 font-bold text-[#173c2a]">Round {round + 1} of {roundCount}</p>}<div className="mt-5 grid gap-4">{boards.map((board) => { const existing = results.find((result) => result.boardNumber === board && result.nsPairIndex === nsPairIndex); return <BoardCard key={`${board}-${existing?.updatedAt ?? "new"}`} gameId={gameId} game={game} table={table} round={round} board={board} ewPair={ewPair} nsPairIndex={nsPairIndex} existing={existing} onError={onError} onNotice={onNotice} onSaved={onSaved} director={director} locked={locked} /> })}</div></section>

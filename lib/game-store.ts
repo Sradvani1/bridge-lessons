@@ -21,7 +21,7 @@ import {
   type StoredResult,
 } from "./game-data"
 import { howellResultCount, type HowellTableCount } from "./howell"
-import type { MitchellBoardsPerRound, MitchellTableCount } from "./mitchell"
+import type { CreatableMitchellTableCount, MitchellBoardsPerRound } from "./mitchell"
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 const CODE_LENGTH = 6
@@ -61,7 +61,7 @@ function generateCode(): string {
 }
 
 export type NewGame =
-  | { movement: "mitchell"; tableCount: MitchellTableCount; boardsPerRound: MitchellBoardsPerRound; pairs: { ns: string[]; ew: string[] } }
+  | { movement: "mitchell"; tableCount: CreatableMitchellTableCount; boardsPerRound: MitchellBoardsPerRound; pairs: { ns: string[]; ew: string[] } }
   | { movement: "howell"; tableCount: HowellTableCount; pairs: string[] }
 
 export async function createGame(game: NewGame): Promise<{ gameId: string; code: string }> {

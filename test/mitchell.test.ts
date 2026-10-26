@@ -20,16 +20,16 @@ test("maps all Mitchell table and round assignments", () => {
 })
 
 test("covers every board once per round for every table and board count", () => {
-  for (const tableCount of [2, 3, 4] as const) {
+  for (const tableCount of [2, 3, 4, 5] as const) {
     for (const boardsPerRound of [3, 4] as const) {
       const seenBoards = new Map<number, number>()
       for (let table = 1; table <= tableCount; table += 1) {
         const ewPairs = new Set<number>()
         for (let round = 0; round < tableCount; round += 1) {
-          const boards = boardNumbersAt(table as 1 | 2 | 3 | 4, round as 0 | 1 | 2 | 3, tableCount, boardsPerRound)
+          const boards = boardNumbersAt(table as 1 | 2 | 3 | 4 | 5, round as 0 | 1 | 2 | 3 | 4, tableCount, boardsPerRound)
           assert.equal(boards.length, boardsPerRound)
           for (const board of boards) seenBoards.set(board, (seenBoards.get(board) ?? 0) + 1)
-          ewPairs.add(eastWestPairAt(table as 1 | 2 | 3 | 4, round as 0 | 1 | 2 | 3, tableCount))
+          ewPairs.add(eastWestPairAt(table as 1 | 2 | 3 | 4 | 5, round as 0 | 1 | 2 | 3 | 4, tableCount))
         }
         // Every East-West pair visits every table across the rounds.
         assert.deepEqual([...ewPairs].sort(), Array.from({ length: tableCount }, (_, index) => index + 1))
@@ -42,8 +42,68 @@ test("covers every board once per round for every table and board count", () => 
   }
 })
 
+test("deals every board to every pair exactly once at odd table counts", () => {
+  for (const tableCount of [3, 5] as const) {
+    for (const boardsPerRound of [3, 4] as const) {
+      const game = asMitchell(parseStoredGame({
+        status: "playing",
+        movement: "mitchell",
+        tableCount,
+        boardsPerRound,
+        pairs: {
+          ns: Array.from({ length: tableCount }, (_, index) => `NS ${index + 1}`),
+          ew: Array.from({ length: tableCount }, (_, index) => `EW ${index + 1}`),
+        },
+        directorUid: "director",
+        pairClaims: {},
+      }))
+      for (let pairNumber = 1; pairNumber <= tableCount * 2; pairNumber += 1) {
+        const seen = new Map<number, number>()
+        for (let round = 0; round < tableCount; round += 1) {
+          for (const board of assignmentForPair(game, String(pairNumber), round)?.boardNumbers ?? []) {
+            seen.set(board, (seen.get(board) ?? 0) + 1)
+          }
+        }
+        assert.deepEqual([...seen.keys()].sort((a, b) => a - b), Array.from({ length: tableCount * boardsPerRound }, (_, index) => index + 1))
+        assert.deepEqual([...seen.values()], Array(tableCount * boardsPerRound).fill(1))
+      }
+    }
+  }
+})
+
+test("documents why even table counts cannot host Mitchell games", () => {
+  // Boards rotate against the pairs with period 2 at even counts, so every
+  // East-West pair replays half its boards and never sees the rest. These
+  // sizes stay readable for legacy docs but are never offered for new games.
+  for (const tableCount of [2, 4] as const) {
+    const game = asMitchell(parseStoredGame({
+      status: "playing",
+      movement: "mitchell",
+      tableCount,
+      boardsPerRound: 4,
+      pairs: {
+        ns: Array.from({ length: tableCount }, (_, index) => `NS ${index + 1}`),
+        ew: Array.from({ length: tableCount }, (_, index) => `EW ${index + 1}`),
+      },
+      directorUid: "director",
+      pairClaims: {},
+    }))
+    // The first East-West pair (printed pair number tableCount + 1) meets a
+    // board group it already played within a full set of rounds.
+    const seen = new Set<number>()
+    let replayed = 0
+    for (let round = 0; round < tableCount; round += 1) {
+      for (const board of assignmentForPair(game, String(tableCount + 1), round)?.boardNumbers ?? []) {
+        if (seen.has(board)) replayed += 1
+        seen.add(board)
+      }
+    }
+    assert.ok(replayed > 0)
+  }
+})
+
 test("derives matching pair totals for every game size", () => {
-  for (const tableCount of [2, 3, 4] as const) {
+  for (const tableCount of [2, 3, 4, 5] as const) {
     for (const boardsPerRound of [3, 4] as const) {
       const game = asMitchell(parseStoredGame({
         status: "playing",
@@ -78,6 +138,10 @@ test("uses the standard dealer and vulnerability chart", () => {
   assert.equal(boardVulnerability(12), "ns")
   assert.equal(boardDealer(1), "North")
   assert.equal(boardDealer(4), "West")
+  // The 16-board vulnerability cycle repeats, so five-table games can score past board 16.
+  assert.equal(boardVulnerability(17), "none")
+  assert.equal(boardVulnerability(20), "both")
+  assert.equal(boardDealer(17), "North")
 })
 
 test("keeps live results private until reveal", () => {

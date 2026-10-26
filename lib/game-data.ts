@@ -107,7 +107,7 @@ export function pairIndicesForNumber(
   pairNumber: string,
 ): { nsPairIndex: number; ewPairIndex: number } | null {
   const pairCount = pairCountForGame(game)
-  if (!/^[1-9]$/.test(pairNumber)) return null
+  if (!/^(10|[1-9])$/.test(pairNumber)) return null
   const picker = Number(pairNumber)
   if (!Number.isInteger(picker) || picker < 1 || picker > pairCount) return null
   if (game.movement === "howell") return { nsPairIndex: picker - 1, ewPairIndex: picker - 1 }
@@ -152,7 +152,7 @@ export function assignmentForPair(game: StoredGame, pairNumber: string, round: n
   const roundCount = mitchellRoundCount(tableCount)
   if (!indices || !isRoundIndex(round, roundCount)) return null
   if (indices.nsPairIndex >= 0) {
-    const table = (indices.nsPairIndex + 1) as 1 | 2 | 3 | 4
+    const table = (indices.nsPairIndex + 1) as 1 | 2 | 3 | 4 | 5
     return {
       table,
       round,
@@ -163,7 +163,7 @@ export function assignmentForPair(game: StoredGame, pairNumber: string, round: n
     }
   }
   const ewNumber = indices.ewPairIndex + 1
-  const table = Array.from({ length: tableCount }, (_, index) => (index + 1) as 1 | 2 | 3 | 4)
+  const table = Array.from({ length: tableCount }, (_, index) => (index + 1) as 1 | 2 | 3 | 4 | 5)
     .find((candidate) => eastWestPairAt(candidate, round, tableCount) === ewNumber)
   if (!table) return null
   return {
@@ -191,7 +191,7 @@ function parseAbsentPairs(raw: unknown, pairCount: number): string[] | null {
   if (!Array.isArray(raw) || raw.length > 1) return null
   const absentPairs: string[] = []
   for (const item of raw) {
-    if (typeof item !== "string" || !/^[1-9]$/.test(item)) return null
+    if (typeof item !== "string" || !/^(10|[1-9])$/.test(item)) return null
     const picker = Number(item)
     if (!Number.isInteger(picker) || picker < 1 || picker > pairCount) return null
     absentPairs.push(item)
@@ -218,8 +218,8 @@ export function allAssignments(game: StoredGame): ResultSlot[] {
   const slots: ResultSlot[] = []
   const tableCount = game.tableCount
   const boardsPerRound = game.boardsPerRound
-  const tables = Array.from({ length: tableCount }, (_, index) => (index + 1) as 1 | 2 | 3 | 4)
-  const rounds = Array.from({ length: mitchellRoundCount(tableCount) }, (_, index) => index as 0 | 1 | 2 | 3)
+  const tables = Array.from({ length: tableCount }, (_, index) => (index + 1) as 1 | 2 | 3 | 4 | 5)
+  const rounds = Array.from({ length: mitchellRoundCount(tableCount) }, (_, index) => index as 0 | 1 | 2 | 3 | 4)
   for (const table of tables) {
     for (const round of rounds) {
       slots.push({ table, round, nsPairIndex: table - 1, ewPairIndex: eastWestPairAt(table, round, tableCount) - 1, boardNumbers: boardNumbersAt(table, round, tableCount, boardsPerRound) })
