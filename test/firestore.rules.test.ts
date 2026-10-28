@@ -180,6 +180,15 @@ test("gates pair claims by Mitchell table count", async () => {
   await assertFails(updateDoc(doc(legacyNine, "games", gameId), { "pairClaims.9": "legacy-nine", lastActivityAt: Date.now() }))
 })
 
+test("rejects out-of-range rounds and boards on five-table games", async () => {
+  await seed(mitchellGame(5, 4))
+  const one = environment.authenticatedContext("pair-one").firestore()
+  await assertSucceeds(updateDoc(doc(one, "games", gameId), { "pairClaims.1": "pair-one", lastActivityAt: Date.now() }))
+  // Pair 1 (North-South 1) plays table 1 every round; round 5 and board 21 are out of range.
+  await assertFails(setDoc(doc(one, "games", gameId, "results", "board-1-ns-0"), result({ boardNumber: 1, round: 5, table: 1, nsPairIndex: 0, ewPairIndex: 0, updatedBy: "pair-one" })))
+  await assertFails(setDoc(doc(one, "games", gameId, "results", "board-21-ns-0"), result({ boardNumber: 21, round: 4, table: 1, nsPairIndex: 0, ewPairIndex: 1, updatedBy: "pair-one" })))
+})
+
 test("rejects a second concurrent game", async () => {
   const director = environment.authenticatedContext("director").firestore()
   const first = writeBatch(director)
