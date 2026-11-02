@@ -100,14 +100,15 @@ service cloud.firestore {
         && request.resource.data.directorUid == request.auth.uid
         && request.resource.data.directorUid is string && request.resource.data.directorUid.size() <= 64
         && ((request.resource.data.movement == 'howell'
-          && request.resource.data.tableCount in [2, 3]
+          && request.resource.data.tableCount in [2, 3, 4]
           && request.resource.data.pairs is list
           && request.resource.data.pairs.size() == request.resource.data.tableCount * 2
           && request.resource.data.pairs[0] is string && request.resource.data.pairs[0].size() >= 1 && request.resource.data.pairs[0].size() <= 60
           && request.resource.data.pairs[1] is string && request.resource.data.pairs[1].size() >= 1 && request.resource.data.pairs[1].size() <= 60
           && request.resource.data.pairs[2] is string && request.resource.data.pairs[2].size() >= 1 && request.resource.data.pairs[2].size() <= 60
           && request.resource.data.pairs[3] is string && request.resource.data.pairs[3].size() >= 1 && request.resource.data.pairs[3].size() <= 60
-          && (request.resource.data.tableCount == 2 || (request.resource.data.pairs[4] is string && request.resource.data.pairs[4].size() >= 1 && request.resource.data.pairs[4].size() <= 60 && request.resource.data.pairs[5] is string && request.resource.data.pairs[5].size() >= 1 && request.resource.data.pairs[5].size() <= 60)))
+          && (request.resource.data.tableCount == 2 || (request.resource.data.pairs[4] is string && request.resource.data.pairs[4].size() >= 1 && request.resource.data.pairs[4].size() <= 60 && request.resource.data.pairs[5] is string && request.resource.data.pairs[5].size() >= 1 && request.resource.data.pairs[5].size() <= 60))
+          && (request.resource.data.tableCount < 4 || (request.resource.data.pairs[6] is string && request.resource.data.pairs[6].size() >= 1 && request.resource.data.pairs[6].size() <= 60 && request.resource.data.pairs[7] is string && request.resource.data.pairs[7].size() >= 1 && request.resource.data.pairs[7].size() <= 60)))
           || (request.resource.data.movement == 'mitchell'
             // Mitchell rotations only line up fairly with an odd table count;
             // even counts replay boards (see lib/mitchell.ts). Existing docs of
@@ -179,11 +180,11 @@ service cloud.firestore {
                 && pairChanged.hasOnly(['6'])
                 && !('6' in pairBefore)
                 && pairAfter['6'] == request.auth.uid)
-            || (!isHowellGame() && (mitchellTc() == 4 || mitchellTc() == 5)
+            || (((!isHowellGame() && (mitchellTc() == 4 || mitchellTc() == 5)) || (isHowellGame() && mitchellTc() == 4))
                 && pairChanged.hasOnly(['7'])
                 && !('7' in pairBefore)
                 && pairAfter['7'] == request.auth.uid)
-            || (!isHowellGame() && (mitchellTc() == 4 || mitchellTc() == 5)
+            || (((!isHowellGame() && (mitchellTc() == 4 || mitchellTc() == 5)) || (isHowellGame() && mitchellTc() == 4))
                 && pairChanged.hasOnly(['8'])
                 && !('8' in pairBefore)
                 && pairAfter['8'] == request.auth.uid)
@@ -311,7 +312,9 @@ service cloud.firestore {
               || (pair == '3' && (entry.nsPairIndex == 2 || entry.ewPairIndex == 2))
               || (pair == '4' && (entry.nsPairIndex == 3 || entry.ewPairIndex == 3))
               || (pair == '5' && (entry.nsPairIndex == 4 || entry.ewPairIndex == 4))
-              || (pair == '6' && (entry.nsPairIndex == 5 || entry.ewPairIndex == 5));
+              || (pair == '6' && (entry.nsPairIndex == 5 || entry.ewPairIndex == 5))
+              || (pair == '7' && (entry.nsPairIndex == 6 || entry.ewPairIndex == 6))
+              || (pair == '8' && (entry.nsPairIndex == 7 || entry.ewPairIndex == 7));
         }
         function readsOwnResultIn(doc) {
           // saveResult reads a board before creating it, so claimed pairs need
@@ -331,7 +334,17 @@ service cloud.firestore {
         // schedule. Evaluating both blobs every write breaks the per-request
         // expression budget on three-table games.
         function correctHowellFormulaIn(doc) {
-          return doc.tableCount == 2 ? howellFormula2() : howellFormula3();
+          return doc.tableCount == 2 ? howellFormula2() : doc.tableCount == 3 ? howellFormula3() : howellFormula4();
+        }
+        // Four-table pairings follow the same round-robin as lib/howell.ts (pair 8
+        // fixed, others rotate): table 1 always seats pair 8 against pair r + 1.
+        function howellFormula4() {
+          let table = request.resource.data.table;
+          let round = request.resource.data.round;
+          return table == 1
+            ? request.resource.data.nsPairIndex == 7 && request.resource.data.ewPairIndex == round
+            : request.resource.data.nsPairIndex == (round + table - 1) % 7
+              && request.resource.data.ewPairIndex == ((round - table + 1) % 7 + 7) % 7;
         }
         function howellFormula2() {
           return (request.resource.data.table == 1 && request.resource.data.nsPairIndex == 0 && request.resource.data.ewPairIndex == request.resource.data.round + 1) || (request.resource.data.table == 2 && ((request.resource.data.round == 0 && request.resource.data.nsPairIndex == 2 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 1 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 3) || (request.resource.data.round == 2 && request.resource.data.nsPairIndex == 1 && request.resource.data.ewPairIndex == 2)));
@@ -340,13 +353,19 @@ service cloud.firestore {
           return (request.resource.data.table == 1 && request.resource.data.nsPairIndex == 5 && request.resource.data.ewPairIndex == request.resource.data.round) || (request.resource.data.table == 2 && request.resource.data.nsPairIndex == (request.resource.data.round + 2) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 3) % 5) || (request.resource.data.table == 3 && request.resource.data.nsPairIndex == (request.resource.data.round + 4) % 5 && request.resource.data.ewPairIndex == (request.resource.data.round + 1) % 5);
         }
         function correctHowellBoardsIn(doc) {
-          return doc.tableCount == 2 ? howellBoards2() : howellBoards3();
+          return doc.tableCount == 2 ? howellBoards2() : doc.tableCount == 3 ? howellBoards3() : howellBoards4();
         }
         function howellBoards2() {
           return (request.resource.data.round == 0 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 12);
         }
         function howellBoards3() {
           return (request.resource.data.table == 1 && request.resource.data.boardNumber >= request.resource.data.round * 3 + 1 && request.resource.data.boardNumber <= request.resource.data.round * 3 + 3) || (request.resource.data.table == 2 && ((request.resource.data.round < 4 && request.resource.data.boardNumber >= 4 + (request.resource.data.round % 2) * 3 && request.resource.data.boardNumber <= 6 + (request.resource.data.round % 2) * 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15))) || (request.resource.data.table == 3 && ((request.resource.data.round < 2 && request.resource.data.boardNumber >= 10 && request.resource.data.boardNumber <= 12) || (request.resource.data.round >= 2 && request.resource.data.round < 4 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 3) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 15)));
+        }
+        function howellBoards4() {
+          return (request.resource.data.table == 1 && ((request.resource.data.round == 0 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 2) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 7 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 3 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 3 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 10) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 6) || (request.resource.data.round == 5 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 14) || (request.resource.data.round == 6 && request.resource.data.boardNumber >= 11 && request.resource.data.boardNumber <= 12)))
+            || (request.resource.data.table == 2 && ((request.resource.data.round == 0 && request.resource.data.boardNumber >= 3 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 10) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 6) || (request.resource.data.round == 3 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 14) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 11 && request.resource.data.boardNumber <= 12) || (request.resource.data.round == 5 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 2) || (request.resource.data.round == 6 && request.resource.data.boardNumber >= 7 && request.resource.data.boardNumber <= 8)))
+            || (request.resource.data.table == 3 && ((request.resource.data.round == 0 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 6) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 14) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 11 && request.resource.data.boardNumber <= 12) || (request.resource.data.round == 3 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 2) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 7 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 5 && request.resource.data.boardNumber >= 3 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 6 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 10)))
+            || (request.resource.data.table == 4 && ((request.resource.data.round == 0 && request.resource.data.boardNumber >= 7 && request.resource.data.boardNumber <= 8) || (request.resource.data.round == 1 && request.resource.data.boardNumber >= 3 && request.resource.data.boardNumber <= 4) || (request.resource.data.round == 2 && request.resource.data.boardNumber >= 9 && request.resource.data.boardNumber <= 10) || (request.resource.data.round == 3 && request.resource.data.boardNumber >= 5 && request.resource.data.boardNumber <= 6) || (request.resource.data.round == 4 && request.resource.data.boardNumber >= 13 && request.resource.data.boardNumber <= 14) || (request.resource.data.round == 5 && request.resource.data.boardNumber >= 11 && request.resource.data.boardNumber <= 12) || (request.resource.data.round == 6 && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= 2)));
         }
         // Mitchell movement as arithmetic: NS stays put, EW rotates up one table
         // per round, and board groups rotate the other way. One formula covers
@@ -366,8 +385,8 @@ service cloud.firestore {
         function validResultIn(doc, tc, bpr, howell) {
           return request.resource.data.keys().hasAll(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'updatedBy', 'updatedAt'])
             && request.resource.data.keys().hasOnly(['boardNumber', 'round', 'table', 'nsPairIndex', 'ewPairIndex', 'kind', 'level', 'strain', 'doubling', 'declarer', 'tricks', 'manualScore', 'updatedBy', 'updatedAt'])
-            && request.resource.data.boardNumber is int && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= (!howell ? tc * bpr : doc.tableCount == 2 ? 12 : 15)
-            && request.resource.data.round is int && request.resource.data.round >= 0 && request.resource.data.round <= (!howell ? tc - 1 : doc.tableCount == 2 ? 2 : 4)
+            && request.resource.data.boardNumber is int && request.resource.data.boardNumber >= 1 && request.resource.data.boardNumber <= (!howell ? tc * bpr : doc.tableCount == 2 ? 12 : doc.tableCount == 3 ? 15 : 14)
+            && request.resource.data.round is int && request.resource.data.round >= 0 && request.resource.data.round <= (!howell ? tc - 1 : doc.tableCount == 2 ? 2 : doc.tableCount == 3 ? 4 : 6)
             && request.resource.data.table is int && request.resource.data.table >= 1 && request.resource.data.table <= (!howell ? tc : doc.tableCount)
             && request.resource.data.nsPairIndex is int && request.resource.data.ewPairIndex is int
             && request.resource.data.updatedBy is string && request.resource.data.updatedBy.size() <= 64

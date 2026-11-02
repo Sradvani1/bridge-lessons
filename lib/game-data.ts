@@ -304,7 +304,7 @@ export function parseStoredResult(raw: unknown, game?: StoredGame): StoredResult
   const mitchellGame = game !== undefined && game.movement !== "howell" ? game : undefined
   const tableCount = howellGame?.tableCount ?? mitchellGame?.tableCount ?? 3
   const boardsPerRound = mitchellGame?.boardsPerRound ?? 4
-  const roundMax = howellGame ? (howellGame.tableCount === 2 ? 2 : 4) : tableCount - 1
+  const roundMax = howellGame ? (howellGame.tableCount === 2 ? 2 : howellGame.tableCount === 3 ? 4 : 6) : tableCount - 1
   const boardMax = howellGame ? howellBoardCount(howellGame.tableCount) : mitchellBoardCount(tableCount, boardsPerRound)
   const boardNumber = intIn(raw, "boardNumber", 1, boardMax)
   const round = intIn(raw, "round", 0, roundMax)

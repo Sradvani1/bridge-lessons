@@ -3,7 +3,7 @@ import { after, afterEach, before, test } from "node:test"
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from "@firebase/rules-unit-testing"
 import { collection, deleteField, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where, writeBatch } from "firebase/firestore"
 import { boardNumbersAt, eastWestPairAt, mitchellResultCount, type MitchellBoardsPerRound, type MitchellTableCount } from "../lib/mitchell"
-import { howellAssignments, howellResultCount } from "../lib/howell"
+import { howellAssignments, howellResultCount, type HowellTableCount } from "../lib/howell"
 
 const projectId = "demo-bridge"
 const gameId = "game-1"
@@ -22,7 +22,7 @@ function game(status: "playing" | "finished" = "playing") {
   }
 }
 
-function howellGame(tableCount: 2 | 3) {
+function howellGame(tableCount: HowellTableCount) {
   const createdAt = Date.now()
   return {
     status: "playing" as const,
@@ -105,12 +105,15 @@ test("allows atomic game and code creation only for the director", async () => {
 })
 
 test("allows atomic Howell game creation for the selected table count", async () => {
-  const director = environment.authenticatedContext("director").firestore()
-  const batch = writeBatch(director)
-  batch.set(doc(director, "games", "howell-created"), howellGame(2))
-  batch.set(doc(director, "codes", "ABC234"), { gameId: "howell-created" })
-  batch.set(doc(director, "active-game", "current"), { gameId: "howell-created", directorUid: "director" })
-  await assertSucceeds(batch.commit())
+  for (const tableCount of [2, 3, 4] as const) {
+    await environment.clearFirestore()
+    const director = environment.authenticatedContext("director").firestore()
+    const batch = writeBatch(director)
+    batch.set(doc(director, "games", `howell-created-${tableCount}`), howellGame(tableCount))
+    batch.set(doc(director, "codes", "ABC234"), { gameId: `howell-created-${tableCount}` })
+    batch.set(doc(director, "active-game", "current"), { gameId: `howell-created-${tableCount}`, directorUid: "director" })
+    await assertSucceeds(batch.commit())
+  }
 })
 
 test("allows atomic Mitchell game creation with three or five tables", async () => {
@@ -323,6 +326,27 @@ test("enforces Howell pair counts and pair-scoped live results", async () => {
   })
   await assertSucceeds(getDocs(query(collection(pairOne, "games", gameId, "results"), where("nsPairIndex", "==", 0))))
   await assertFails(getDocs(query(collection(pairTwo, "games", gameId, "results"), where("nsPairIndex", "==", 0))))
+})
+
+test("claims all eight pairs of a four-table Howell game", async () => {
+  await seed(howellGame(4))
+  for (let pairNumber = 1; pairNumber <= 8; pairNumber += 1) {
+    const db = environment.authenticatedContext(`howell-4-${pairNumber}`).firestore()
+    await assertSucceeds(updateDoc(doc(db, "games", gameId), { [`pairClaims.${pairNumber}`]: `howell-4-${pairNumber}`, lastActivityAt: Date.now() }))
+  }
+  // There is no ninth pair even at four tables.
+  const pairNine = environment.authenticatedContext("howell-4-9").firestore()
+  await assertFails(updateDoc(doc(pairNine, "games", gameId), { "pairClaims.9": "howell-4-9", lastActivityAt: Date.now() }))
+})
+
+test("allows a four-table Howell pair to write its own boards only", async () => {
+  await seed({ ...howellGame(4), pairClaims: { "8": "pair-eight" } })
+  const pairEight = environment.authenticatedContext("pair-eight").firestore()
+  // Round 0 table 1 is pair 8 (North-South) versus pair 1 with boards 1 and 2.
+  await assertSucceeds(setDoc(doc(pairEight, "games", gameId, "results", "board-1-ns-7"), result({ boardNumber: 1, round: 0, table: 1, nsPairIndex: 7, ewPairIndex: 0, updatedBy: "pair-eight" })))
+  await assertSucceeds(getDoc(doc(pairEight, "games", gameId, "results", "board-1-ns-7")))
+  // Pair 8 never plays board 3 at table 2 in round 0 (that is pairs 2 and 7).
+  await assertFails(setDoc(doc(pairEight, "games", gameId, "results", "board-3-ns-1"), result({ boardNumber: 3, round: 0, table: 2, nsPairIndex: 1, ewPairIndex: 6, updatedBy: "pair-eight" })))
 })
 
 test("accepts only scheduled Howell results", async () => {
@@ -548,7 +572,7 @@ test("rehearses scorer saves and director finish for every movement", async () =
       }))).flat(),
       expectedResults: mitchellResultCount(tableCount, boardsPerRound),
     })),
-    ...([2, 3] as const).map((tableCount) => ({ name: `howell-${tableCount}`, tableCount, data: howellGame(tableCount), assignments: howellAssignments(tableCount), expectedResults: howellResultCount(tableCount) })),
+    ...([2, 3, 4] as const).map((tableCount) => ({ name: `howell-${tableCount}`, tableCount, data: howellGame(tableCount), assignments: howellAssignments(tableCount), expectedResults: howellResultCount(tableCount) })),
   ]
 
   for (const movement of movements) {

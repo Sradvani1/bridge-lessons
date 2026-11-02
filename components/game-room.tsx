@@ -9,7 +9,7 @@ import { cancelGame, claimPair, fetchGame, fetchResult, fetchResults, finishGame
 import { requireUserId } from "@/lib/firebase"
 import { isOnline, OFFLINE_MESSAGE } from "@/lib/online"
 import { boardDealer, boardNumbersAt, boardVulnerability, eastWestPairAt, mitchellBoardCount, mitchellRoundCount, type MitchellBoardsPerRound, type MitchellTableCount, type RoundIndex } from "@/lib/mitchell"
-import { howellAssignmentAt, howellAssignments, howellBoardCount, howellResultCount, howellRoundCount } from "@/lib/howell"
+import { howellAssignmentAt, howellAssignments, howellBoardCount, howellResultCount, howellRoundCount, type HowellTableCount } from "@/lib/howell"
 import { computeHowellStandings, computeStandings, howellMatchpointPercentage, matchpointPercentage, type Standings, type StandingsRow } from "@/lib/standings"
 import ScoreGlossary from "@/components/score-glossary"
 
@@ -427,7 +427,7 @@ export default function GameRoom({ gameId, joinCode: initialJoinCode }: Props) {
   </div>
 }
 
-function StandingsTable({ title, rows, tableCount, mitchellTableCount, mitchellBoardsPerRound }: { title: string; rows: StandingsRow[]; tableCount?: 2 | 3; mitchellTableCount?: MitchellTableCount; mitchellBoardsPerRound?: MitchellBoardsPerRound }) {
+function StandingsTable({ title, rows, tableCount, mitchellTableCount, mitchellBoardsPerRound }: { title: string; rows: StandingsRow[]; tableCount?: HowellTableCount; mitchellTableCount?: MitchellTableCount; mitchellBoardsPerRound?: MitchellBoardsPerRound }) {
   const boardTotal = tableCount ? howellBoardCount(tableCount) : mitchellBoardCount(mitchellTableCount ?? 3, mitchellBoardsPerRound ?? 4)
   return <div><h3 className="font-bold text-[#173c2a]">{title}</h3><div role="table" aria-label={`${title} standings`} className="mt-2 space-y-2">
     <div role="row" className="grid grid-cols-[1fr_3rem_4.5rem_4rem] items-center gap-2 px-3 text-xs font-semibold uppercase tracking-wide text-[#52615a]"><span role="columnheader">Pair</span><span role="columnheader" className="text-right">MP</span><span role="columnheader" className="text-right">%</span><span role="columnheader" className="text-right">B</span></div>
@@ -438,12 +438,12 @@ function StandingsTable({ title, rows, tableCount, mitchellTableCount, mitchellB
   </div></div>
 }
 
-function HowellMovementCard({ pairs, tableCount }: { pairs: readonly string[]; tableCount: 2 | 3 }) {
+function HowellMovementCard({ pairs, tableCount }: { pairs: readonly string[]; tableCount: HowellTableCount }) {
   const assignments = howellAssignments(tableCount)
   return <section className="mt-5"><h2 className="text-xl font-bold text-[#123a28]">Howell Movement Card</h2><div className="mt-3 space-y-3">{Array.from({ length: howellRoundCount(tableCount) }, (_, round) => <article key={round} className="rounded-lg bg-white p-3"><h3 className="font-bold text-[#173c2a]">Round {round + 1}</h3><div className="mt-2 grid gap-1 text-sm text-[#52615a]">{assignments.filter((assignment) => assignment.round === round).map((assignment) => <p key={assignment.table}>Table {assignment.table}: Boards {assignment.boardNumbers.join("-")} | {pairs[assignment.nsPairIndex]} (NS) vs {pairs[assignment.ewPairIndex]} (EW)</p>)}</div></article>)}</div></section>
 }
 
-function Traveller({ results, movement, tableCount, mitchellTableCount, mitchellBoardsPerRound }: { results: StoredResult[]; movement?: "mitchell" | "howell"; tableCount?: 2 | 3 | null; mitchellTableCount?: MitchellTableCount; mitchellBoardsPerRound?: MitchellBoardsPerRound }) {
+function Traveller({ results, movement, tableCount, mitchellTableCount, mitchellBoardsPerRound }: { results: StoredResult[]; movement?: "mitchell" | "howell"; tableCount?: HowellTableCount | null; mitchellTableCount?: MitchellTableCount; mitchellBoardsPerRound?: MitchellBoardsPerRound }) {
   const byBoard = new Map<number, StoredResult[]>()
   for (const result of results) {
     if (deriveNsScore(result) === null) continue

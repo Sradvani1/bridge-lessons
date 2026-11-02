@@ -2,19 +2,19 @@
 
 import { useId, useState } from "react"
 
-import { howellBoardCount } from "@/lib/howell"
+import { howellBoardCount, type HowellTableCount } from "@/lib/howell"
 import { mitchellBoardCount, mitchellMaxBoardMatchpoints, mitchellMaxTotalMatchpoints, type MitchellBoardsPerRound, type MitchellTableCount } from "@/lib/mitchell"
 
 type Props = {
   variant: "howell" | "mitchell"
-  tableCount?: 2 | 3
+  tableCount?: HowellTableCount
   mitchellTableCount?: MitchellTableCount
   mitchellBoardsPerRound?: MitchellBoardsPerRound
 }
 
 function maximumFor(
   variant: Props["variant"],
-  tableCount?: 2 | 3,
+  tableCount?: HowellTableCount,
   mitchellTableCount: MitchellTableCount = 3,
   mitchellBoardsPerRound: MitchellBoardsPerRound = 4,
 ): { max: number; boards: number; boardMax: number } {
