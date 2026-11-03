@@ -321,6 +321,8 @@ test("enforces Howell pair counts and pair-scoped live results", async () => {
   await assertSucceeds(updateDoc(doc(pairTwo, "games", gameId), { "pairClaims.2": "pair-two", lastActivityAt: Date.now() }))
   // A two-table Howell game has only four pairs.
   await assertFails(updateDoc(doc(pairFive, "games", gameId), { "pairClaims.5": "pair-five", lastActivityAt: Date.now() }))
+  const pairSeven = environment.authenticatedContext("pair-seven").firestore()
+  await assertFails(updateDoc(doc(pairSeven, "games", gameId), { "pairClaims.7": "pair-seven", lastActivityAt: Date.now() }))
   await environment.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), "games", gameId, "results", "board-1-ns-0"), result({ ewPairIndex: 3 }))
   })
@@ -347,6 +349,15 @@ test("allows a four-table Howell pair to write its own boards only", async () =>
   await assertSucceeds(getDoc(doc(pairEight, "games", gameId, "results", "board-1-ns-7")))
   // Pair 8 never plays board 3 at table 2 in round 0 (that is pairs 2 and 7).
   await assertFails(setDoc(doc(pairEight, "games", gameId, "results", "board-3-ns-1"), result({ boardNumber: 3, round: 0, table: 2, nsPairIndex: 1, ewPairIndex: 6, updatedBy: "pair-eight" })))
+})
+
+test("rejects out-of-range rounds and boards on four-table Howell games", async () => {
+  await seed({ ...howellGame(4), pairClaims: { "8": "pair-eight" } })
+  const pairEight = environment.authenticatedContext("pair-eight").firestore()
+  // Round 7 does not exist (rounds are 0-6); everything else about this write is valid.
+  await assertFails(setDoc(doc(pairEight, "games", gameId, "results", "board-1-ns-7"), result({ boardNumber: 1, round: 7, table: 1, nsPairIndex: 7, ewPairIndex: 6, updatedBy: "pair-eight" })))
+  // Board 15 does not exist (boards are 1-14); everything else about this write is valid.
+  await assertFails(setDoc(doc(pairEight, "games", gameId, "results", "board-15-ns-7"), result({ boardNumber: 15, round: 6, table: 1, nsPairIndex: 7, ewPairIndex: 6, updatedBy: "pair-eight" })))
 })
 
 test("accepts only scheduled Howell results", async () => {

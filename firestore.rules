@@ -244,6 +244,9 @@ service cloud.firestore {
       // for every other update shape. Each update evaluates the document diffs
       // once here and threads them through: repeating diff() calls across
       // branches exceeds the per-request expression budget on large games.
+      // Every game doc carries pairClaims (create requires it), so the eager
+      // diff below never sees a missing field; legacy docs without it are all
+      // finished or cancelled, and every update path requires a live game.
       function allowGameUpdate() {
         let changed = request.resource.data.diff(gameData()).affectedKeys();
         let pairDiff = request.resource.data.pairClaims.diff(gameData().pairClaims);
